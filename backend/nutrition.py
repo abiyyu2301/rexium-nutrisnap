@@ -30,7 +30,7 @@ class NutritionDB:
     def client(self):
         if self._client is None and self.project_id:
             try:
-                self._client = firestore.Client(project=self.project_id)
+                self._client = firestore.Client(project=self.project_id, database=self.project_id)
             except Exception:
                 self._client = None
         return self._client
