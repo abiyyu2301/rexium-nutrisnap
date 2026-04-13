@@ -128,16 +128,43 @@ async def analyze(file: UploadFile = File(...)):
         raise HTTPException(400, "No food detected in image")
 
     # 4. Match against nutrition DB
+    # Labels that are too generic to reliably match to nutrition data
+    GENERIC_LABELS = {
+        "food", "meal", "dish", "cuisine", "eating", "plate", "bowl",
+        "side dish", "side", "main dish", "staple food", "fast food",
+        "snack", "appetizer", "entree", "course", "food group",
+        "dishware", "plate", "cutlery", "tableware",
+        "spice", "ingredient", "料理",  # Chinese/Japanese
+    }
+
+    # Blocklist: nutrition DB entries that are bad matches for generic food labels
+    BLOCKLIST_KEYWORDS = {"oil", "fat", "sugar", "syrup", "margarine", "shortening"}
+
     identified = []
     for item in raw_foods:
-        name = item.get("name", "")
+        name = item.get("name", "").lower()
         confidence = float(item.get("confidence", 0.5))
 
+        # Skip very generic labels
+        if name in GENERIC_LABELS or len(name) < 3:
+            continue
+
+        # Skip generic labels with low confidence
+        if confidence < 0.5 and name in {"vegetable", "fruit", "protein", "carb"}:
+            continue
+
         # Fuzzy search in Firestore
-        matches = db.search_foods(name, limit=3)
+        matches = db.search_foods(name.title(), limit=3)
 
         if matches:
             best = matches[0]
+            best_name = best.get("food_name", "").lower()
+
+            # Skip bad blocklist matches for generic labels
+            if name in {"vegetable", "leaf vegetable", "fruit"}:
+                if any(b in best_name for b in BLOCKLIST_KEYWORDS):
+                    continue
+
             identified.append(IdentifiedFood(
                 raw_name=name,
                 matched_id=best.get("id"),
