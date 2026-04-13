@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from vertexai import analyze_meal_image
+from gemini import analyze_meal_image
 from nutrition import NutritionDB
 
 app = FastAPI(title="NutriSnap API", version="1.0.0")
