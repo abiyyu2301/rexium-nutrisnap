@@ -5,12 +5,10 @@ Uses Google Cloud Vision API (Label Detection + Object Localization)
 to identify foods in meal photos, then matches against the nutrition DB.
 """
 import base64
-import json
 import os
 from typing import Optional
 
-from google.oauth2 import service_account
-import google.auth.transport.requests as auth_requests
+import google.auth
 import requests
 
 GCP_PROJECT = os.getenv("GCP_PROJECT", os.getenv("GCP_PROJECT_ID", ""))
@@ -56,15 +54,17 @@ NON_FOOD_LABELS = {
 }
 
 
-def _get_credentials():
-    """Get GCP credentials from service account file or ADC."""
-    creds, _ = None, None
-    try:
-        creds, _ = service_account.Credentials.with_scopes(
-            ['https://www.googleapis.com/auth/cloud-platform'])
-    except Exception:
-        pass
-    return creds
+def _get_token() -> str:
+    """
+    Get OAuth2 access token using google.auth.default().
+    Works in Cloud Run (metadata server) and locally (ADC/service account).
+    """
+    credentials, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    request = google.auth.transport.requests.Request()
+    credentials.refresh(request)
+    return credentials.token
 
 
 def _call_vision_api(image_bytes: bytes) -> list[dict]:
@@ -72,14 +72,7 @@ def _call_vision_api(image_bytes: bytes) -> list[dict]:
     Call Cloud Vision API with both LABEL_DETECTION and OBJECT_LOCALIZATION.
     Returns a list of detected items with description and score.
     """
-    credentials, _ = _get_credentials()
-    if credentials is None:
-        raise RuntimeError("No GCP credentials found")
-
-    request = auth_requests.Request()
-    credentials.refresh(request)
-    token = credentials.token
-
+    token = _get_token()
     image_content = base64.b64encode(image_bytes).decode()
 
     payload = {
@@ -106,10 +99,17 @@ def _call_vision_api(image_bytes: bytes) -> list[dict]:
     response.raise_for_status()
     data = response.json()
 
+    # Handle edge case where responses is null/missing
+    responses = data.get("responses")
+    if not responses:
+        return []
+
+    first = responses[0] if responses else {}
+
     results = []
 
     # Parse label annotations
-    for label in data.get("responses", [{}])[0].get("labelAnnotations", []):
+    for label in first.get("labelAnnotations", []):
         results.append({
             "description": label.get("description", "").lower(),
             "score": label.get("score", 0),
@@ -117,7 +117,7 @@ def _call_vision_api(image_bytes: bytes) -> list[dict]:
         })
 
     # Parse localized objects
-    for obj in data.get("responses", [{}])[0].get("localizedObjectAnnotations", []):
+    for obj in first.get("localizedObjectAnnotations", []):
         results.append({
             "description": obj.get("name", "").lower(),
             "score": obj.get("score", 0),
