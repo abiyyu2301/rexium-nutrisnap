@@ -3,7 +3,6 @@
 
 substitutions:
   _REGION: asia-southeast1
-  _SERVICE_ACCOUNT: nutrisnap-backend-sa
 
 steps:
   # ── Build backend ──────────────────────────────────────────────────────────
