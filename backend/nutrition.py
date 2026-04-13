@@ -1,23 +1,67 @@
 """
 backend/nutrition.py — Firestore Nutrition DB with fuzzy search
-Loads from Firestore 'foods' collection.
+
+Searches via:
+1. array_contains on search_tokens (word-level partial match)
+2. Firestore prefix match on food_name_lower (fallback)
+3. Local JSON fallback (local dev without GCP credentials)
 """
 import os
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
-from google.cloud import firestore  # Google Cloud Firestore client
+from google.cloud import firestore
 
 GCP_PROJECT = os.getenv("GCP_PROJECT", os.getenv("GCP_PROJECT_ID", ""))
-
-# Local fallback data path (for local dev without GCP credentials)
 LOCAL_DATA_PATH = Path(__file__).parent.parent / "nutrition-data" / "tkpi_clean.json"
+
+# English -> Indonesian food term translations
+EN_TO_ID = {
+    "rice": {"nasi", "padi"},
+    "noodle": {"mie", "mi"},
+    "chicken": {"ayam"},
+    "beef": {"sapi", "daging_sapi"},
+    "pork": {"babi"},
+    "fish": {"ikan"},
+    "shrimp": {"udang"},
+    "tofu": {"tahu"},
+    "tempeh": {"tempe"},
+    "egg": {"telur"},
+    "vegetable": {"sayur", "sayuran"},
+    "cabbage": {"kubis", "kol"},
+    "spinach": {"bayam"},
+    "kale": {"kangkung"},
+    "broccoli": {"brokoli"},
+    "carrot": {"wortel"},
+    "cucumber": {"mentimun"},
+    "tomato": {"tomat"},
+    "onion": {"bawang"},
+    "garlic": {"bawang_putih"},
+    "chili": {"cabai"},
+    "pepper": {"merica"},
+    "curry": {"kari", "gulai"},
+    "soup": {"soto", "sup", "kuah"},
+    "fried": {"goreng"},
+    "grilled": {"panggang", "bakar"},
+    "bread": {"roti"},
+    "fruit": {"buah"},
+    "coffee": {"kopi"},
+    "tea": {"teh"},
+    "milk": {"susu"},
+    "coconut": {"kelapa", "santan"},
+    "snack": {"kudapan", "cemilan"},
+    "meal": {"makan"},
+    "sauce": {"saus", "sambal"},
+    "sweet": {"manis"},
+    "spicy": {"pedas"},
+}
 
 
 class NutritionDB:
     """
-    Fuzzy-match food names against the nutrition database.
+    Fuzzy-match food names against the Firestore nutrition database.
     Falls back to local JSON when Firestore is unavailable (local dev).
     """
 
@@ -30,7 +74,10 @@ class NutritionDB:
     def client(self):
         if self._client is None and self.project_id:
             try:
-                self._client = firestore.Client(project=self.project_id, database=self.project_id)
+                self._client = firestore.Client(
+                    project=self.project_id,
+                    database=self.project_id,
+                )
             except Exception:
                 self._client = None
         return self._client
@@ -46,6 +93,22 @@ class NutritionDB:
             self._local_cache = []
         return self._local_cache
 
+    def _expand_query(self, query: str) -> list[str]:
+        """Expand a search query with translations and sub-queries."""
+        q = query.lower().strip()
+        queries = [q]
+
+        # Add individual words
+        words = re.findall(r"[a-z0-9]+", q)
+        queries.extend(words)
+
+        # Add translations
+        for eng, indonesians in EN_TO_ID.items():
+            if eng in q or any(w.startswith(eng) for w in words):
+                queries.extend(indonesians)
+
+        return list(dict.fromkeys(queries))  # dedupe
+
     def _levenshtein(self, s1: str, s2: str) -> int:
         """Simple edit distance."""
         if len(s1) < len(s2):
@@ -57,9 +120,11 @@ class NutritionDB:
             curr = [i + 1]
             for j, c2 in enumerate(s2):
                 curr.append(
-                    min(prev[j + 1] + 1,
+                    min(
+                        prev[j + 1] + 1,
                         curr[j] + 1,
-                        prev[j] + (c1 != c2))
+                        prev[j] + (c1 != c2),
+                    )
                 )
             prev = curr
         return prev[-1]
@@ -74,9 +139,7 @@ class NutritionDB:
         if q == c:
             return 1.0
         if q in c or c in q:
-            # substring match — high score
             return 0.85 + 0.1 * (min(len(q), len(c)) / max(len(q), len(c)))
-        # Levenshtein normalized
         dist = self._levenshtein(q, c)
         max_len = max(len(q), len(c))
         return max(0.0, 1.0 - (dist / max_len))
@@ -84,33 +147,65 @@ class NutritionDB:
     def search_foods(self, query: str, limit: int = 5) -> list[dict]:
         """
         Fuzzy search foods by name.
-        Tries Firestore first, falls back to local JSON.
+        Tries:
+          1. array_contains on search_tokens (word partial match)
+          2. Prefix match on food_name_lower (fallback)
+          3. Local JSON fallback (local dev)
         Returns top `limit` matches sorted by score descending.
         """
         if not query or len(query) < 2:
             return []
 
         results = []
+        expanded = self._expand_query(query)
+        seen_ids = set()
 
-        # Try Firestore
+        # Strategy 1: array_contains with expanded query terms
         if self.client:
             try:
                 coll = self.client.collection("foods")
-                # Simple prefix match on food_name
-                docs = (
-                    coll.where("food_name_lower", ">=", query.lower())
-                        .where("food_name_lower", "<=", query.lower() + "\uf8ff")
-                        .limit(limit * 2)
-                        .stream()
-                )
-                for doc in docs:
-                    d = doc.to_dict()
-                    d["id"] = doc.id
-                    results.append(d)
+                for term in expanded[:6]:  # limit OR clauses
+                    docs = (
+                        coll.where("search_tokens", "array_contains", term)
+                            .limit(limit * 3)
+                            .stream()
+                    )
+                    for doc in docs:
+                        if doc.id in seen_ids:
+                            continue
+                        seen_ids.add(doc.id)
+                        d = doc.to_dict()
+                        d["id"] = doc.id
+                        score = self._score(query, d.get("food_name", ""))
+                        d["score"] = score
+                        results.append(d)
             except Exception:
-                pass  # Fall back to local
+                pass  # fall through to next strategy
 
-        # Local fallback
+        # Strategy 2: prefix match on food_name_lower
+        if not results and self.client:
+            try:
+                coll = self.client.collection("foods")
+                for term in expanded[:3]:
+                    docs = (
+                        coll.where("food_name_lower", ">=", term)
+                            .where("food_name_lower", "<=", term + "\uf8ff")
+                            .limit(limit * 3)
+                            .stream()
+                    )
+                    for doc in docs:
+                        if doc.id in seen_ids:
+                            continue
+                        seen_ids.add(doc.id)
+                        d = doc.to_dict()
+                        d["id"] = doc.id
+                        score = self._score(query, d.get("food_name", ""))
+                        d["score"] = score
+                        results.append(d)
+            except Exception:
+                pass
+
+        # Strategy 3: local JSON fallback
         if not results:
             all_foods = self._load_local()
             for food in all_foods:
@@ -119,18 +214,8 @@ class NutritionDB:
                 if score > 0.4:
                     results.append(food | {"score": score, "id": food.get("id", "")})
 
-        # Fuzzy sort on local results
-        if results and "score" not in results[0]:
-            scored = [
-                (f, self._score(query, f.get("food_name", "")))
-                for f in results
-            ]
-            scored.sort(key=lambda x: x[1], reverse=True)
-            results = [f[0] for f in scored[:limit]]
-
-        # Add score if missing
-        for r in results:
-            if "score" not in r:
-                r["score"] = self._score(query, r.get("food_name", ""))
+        # Sort by score
+        if results:
+            results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         return results[:limit]
