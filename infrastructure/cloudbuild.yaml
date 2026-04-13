@@ -14,9 +14,11 @@ steps:
       - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/backend:$COMMIT_SHA'
       - '-t'
       - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/backend:latest'
+      - '-f'
+      - 'infrastructure/Dockerfile.backend'
       - '--cache-from'
       - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/backend:latest'
-      - './backend'
+      - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
     id: 'push-backend'
@@ -35,7 +37,9 @@ steps:
       - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/frontend:$COMMIT_SHA'
       - '-t'
       - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/frontend:latest'
-      - './frontend'
+      - '-f'
+      - 'infrastructure/Dockerfile.frontend'
+      - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
     id: 'push-frontend'
