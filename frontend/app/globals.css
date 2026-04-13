@@ -1,0 +1,289 @@
+/* globals.css — NutriSnap Design System */
+:root {
+  --green:       #2D6A4F;
+  --green-light:  #52B788;
+  --green-dark:   #1B4332;
+  --cream:       #FAFAF5;
+  --charcoal:    #1A1A1A;
+  --muted:       #6B7280;
+  --border:      #E5E7EB;
+  --radius:      12px;
+  --shadow:      0 4px 24px rgba(0,0,0,0.08);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  background: var(--cream);
+  color: var(--charcoal);
+  min-height: 100vh;
+}
+
+/* ── Page Layout ──────────────────────────────────────────────────────────── */
+
+.main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  min-height: 100vh;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.header { text-align: center; margin-bottom: 32px; }
+
+.logo {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--green);
+  letter-spacing: -0.5px;
+}
+
+.tagline {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: 4px;
+}
+
+/* ── Upload ──────────────────────────────────────────────────────────────── */
+
+.uploadSection { display: flex; flex-direction: column; gap: 24px; }
+
+.dropzone {
+  border: 2px dashed var(--green-light);
+  border-radius: var(--radius);
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  background: white;
+  transition: border-color 0.2s, background 0.2s;
+}
+.dropzone:hover {
+  border-color: var(--green);
+  background: #f0fdf4;
+}
+
+.dropzoneIcon { color: var(--green-light); margin-bottom: 16px; }
+
+.dropzoneText {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--charcoal);
+}
+
+.dropzoneSubtext {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.cameraBtn {
+  margin-top: 20px;
+  background: var(--green);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
+
+.hiddenInput { display: none; }
+
+/* ── Recent ───────────────────────────────────────────────────────────────── */
+
+.recentLabel {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.recentEmpty {
+  text-align: center;
+  padding: 20px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  background: white;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+/* ── Loading ──────────────────────────────────────────────────────────────── */
+
+.loadingSection { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+
+.previewImage {
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  border-radius: var(--radius);
+}
+
+.loadingCard {
+  background: white;
+  border-radius: var(--radius);
+  padding: 32px;
+  text-align: center;
+  width: 100%;
+  box-shadow: var(--shadow);
+}
+
+.spinner {
+  width: 40px; height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loadingText { font-weight: 700; font-size: 1.1rem; }
+.loadingSubtext { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+
+/* ── Error ────────────────────────────────────────────────────────────────── */
+
+.errorSection { display: flex; flex-direction: column; gap: 16px; }
+
+.errorCard {
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  border-radius: var(--radius);
+  padding: 24px;
+  text-align: center;
+}
+
+.errorTitle { font-weight: 700; color: #DC2626; margin-bottom: 8px; }
+.errorMsg { color: #7F1D1D; font-size: 0.9rem; margin-bottom: 16px; }
+
+.retryBtn {
+  background: var(--green);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 24px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── Result ───────────────────────────────────────────────────────────────── */
+
+.resultSection { display: flex; flex-direction: column; gap: 16px; }
+
+.resultImage {
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: var(--radius);
+}
+
+/* Macro Summary Card */
+.macroCard {
+  background: white;
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+
+.calorieRing {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.calorieNumber {
+  display: block;
+  font-size: 4rem;
+  font-weight: 800;
+  color: var(--green);
+  line-height: 1;
+}
+
+.calorieLabel {
+  display: block;
+  color: var(--muted);
+  font-size: 1rem;
+  margin-top: 4px;
+}
+
+.macroBars { display: flex; flex-direction: column; gap: 12px; }
+
+.macroRow {
+  display: grid;
+  grid-template-columns: 60px 1fr 50px;
+  align-items: center;
+  gap: 8px;
+}
+
+.macroLabel { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+
+.macroTrack {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.macroFill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+
+.macroValue { font-size: 0.8rem; font-weight: 600; text-align: right; }
+
+/* Food List */
+.foodList {
+  background: white;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.foodListTitle {
+  padding: 16px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+}
+
+.foodRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.foodRow:last-child { border-bottom: none; }
+
+.foodInfo { display: flex; flex-direction: column; gap: 2px; }
+.foodName { font-weight: 600; font-size: 0.95rem; }
+.foodNoMatch { font-size: 0.75rem; color: #F59E0B; }
+.foodRaw { font-size: 0.75rem; color: var(--muted); font-style: italic; }
+
+.foodNutrition { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.foodCal { font-weight: 700; color: var(--green); }
+.foodMacros { font-size: 0.75rem; color: var(--muted); }
+.confBadge { font-size: 0.7rem; font-weight: 600; }
+
+.anotherBtn {
+  background: var(--green);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  padding: 14px 24px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 8px;
+}
