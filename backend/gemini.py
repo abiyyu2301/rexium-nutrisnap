@@ -1,52 +1,152 @@
 """
-backend/vertexai.py — Gemini Vision Integration
-Uses GCP Vertex AI to identify foods in meal photos.
+backend/gemini.py — Vision Integration via GCP Cloud Vision API
+
+Uses Google Cloud Vision API (Label Detection + Object Localization)
+to identify foods in meal photos, then matches against the nutrition DB.
 """
+import base64
 import json
 import os
-import re
 from typing import Optional
 
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+from google.oauth2 import service_account
+import google.auth.transport.requests as auth_requests
+import requests
 
 GCP_PROJECT = os.getenv("GCP_PROJECT", os.getenv("GCP_PROJECT_ID", ""))
-GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+VISION_API_URL = "https://vision.googleapis.com/v1/images:annotate"
 
-# Initialize Vertex AI (credentials from service account)
-try:
-    vertexai.init(project=GCP_PROJECT, location=GCP_LOCATION)
-except Exception:
-    pass  # Will retry on first call
+# Food-related label keywords (Cloud Vision returns these for food images)
+# Matches against label descriptions to filter food items
+FOOD_KEYWORDS = {
+    # Indonesian staples
+    "rice", "nasi", "noodle", "mie", "soup", "fried", "grilled",
+    "satay", "sate", "curry", "sambal", "coconut", "coconut milk",
+    "chicken", "beef", "pork", "fish", "shrimp", "prawn", "tofu",
+    "tempeh", "egg", "vegetable", "salad", "fruit", "banana",
+    "mango", "pineapple", "jackfruit", "durian", "papaya",
+    # General food
+    "food", "meal", "dish", "cuisine", "eating", "plate", "bowl",
+    "bread", "pizza", "burger", "sandwich", "pasta", "rice bowl",
+    "stew", "gratin", "roast", "steak", "sushi", "ramen", "pho",
+    "taco", "nachos", "kebab", "falafel", "dumpling", "spring roll",
+    "ice cream", "dessert", "cake", "cookie", "pastry", "chocolate",
+    "coffee", "tea", "juice", "smoothie", "drink", "beverage",
+    "fried rice", "fried noodle", "laksa", "rendang", "soto",
+    "gado", "gado gado", "pecel", "kangkung", "bayam", "kecap",
+    "soy sauce", "fish sauce", "chili", "garlic", "ginger",
+    "breaded", "crispy", "steamed", "boiled", "smoked", "dried",
+    "organic", "fresh", "raw", "cooked", "hot", "cold",
+    # Fruits & produce
+    "apple", "orange", "lemon", "lime", "avocado", "tomato",
+    "cucumber", "lettuce", "spinach", "carrot", "broccoli",
+    "potato", "corn", "beans", "mushroom", "onion", "pepper",
+    # Desserts & sweets
+    "es", "es cendol", "es teler", "bubur", "klepon", "lapis",
+    "kue", "roti", "tahu", "tahu goreng", "tahur", "kerak",
+}
 
-PROMPT = """
-You are a nutrition analysis assistant for Indonesian cuisine.
-Analyze this meal photo and identify each distinct food item visible.
-
-For each item provide:
-1. Food name (Indonesian preferred, e.g. "Nasi goreng", "Sate ayam", "Gado-gado")
-2. Brief description of preparation if visible (grilled, fried, soup, steamed, etc.)
-3. Your confidence the identification is correct (0.0 to 1.0)
-
-Return ONLY valid JSON — no markdown formatting, no explanation:
-{"foods": [{"name": "...", "description": "...", "confidence": 0.0}]}
-
-Rules:
-- Identify ALL visible food items individually
-- Count each distinct food as a separate item (nasi goreng + ayam = 2 items)
-- If a food is unidentifiable, omit it — do not guess
-- Low confidence items (below 0.6) should still be named but marked honestly
-- Be specific about Indonesian dishes; use common Indonesian food names
-"""
+# Non-food labels to exclude
+NON_FOOD_LABELS = {
+    "electronics", "device", "phone", "computer", "screen", "furniture",
+    "clothing", "shoes", "bag", "car", "building", "landscape",
+    "sky", "cloud", "grass", "tree", "flower", "beach", "mountain",
+    "person", "people", "selfie", "hand", "face", "skin", "hair",
+    "text", "font", "screenshot", "diagram", "logo", "brand",
+}
 
 
-def analyze_meal_image(image_bytes: bytes, model_name: str = "gemini-2.0-flash") -> list[dict]:
+def _get_credentials():
+    """Get GCP credentials from service account file or ADC."""
+    creds, _ = None, None
+    try:
+        creds, _ = service_account.Credentials.with_scopes(
+            ['https://www.googleapis.com/auth/cloud-platform'])
+    except Exception:
+        pass
+    return creds
+
+
+def _call_vision_api(image_bytes: bytes) -> list[dict]:
     """
-    Send meal image to Gemini and return list of identified foods.
+    Call Cloud Vision API with both LABEL_DETECTION and OBJECT_LOCALIZATION.
+    Returns a list of detected items with description and score.
+    """
+    credentials, _ = _get_credentials()
+    if credentials is None:
+        raise RuntimeError("No GCP credentials found")
+
+    request = auth_requests.Request()
+    credentials.refresh(request)
+    token = credentials.token
+
+    image_content = base64.b64encode(image_bytes).decode()
+
+    payload = {
+        "requests": [{
+            "image": {"content": image_content},
+            "features": [
+                {"type": "LABEL_DETECTION", "maxResults": 20},
+                {"type": "OBJECT_LOCALIZATION", "maxResults": 15},
+            ],
+        }]
+    }
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    response = requests.post(
+        VISION_API_URL,
+        headers=headers,
+        json=payload,
+        timeout=15,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    results = []
+
+    # Parse label annotations
+    for label in data.get("responses", [{}])[0].get("labelAnnotations", []):
+        results.append({
+            "description": label.get("description", "").lower(),
+            "score": label.get("score", 0),
+            "source": "label",
+        })
+
+    # Parse localized objects
+    for obj in data.get("responses", [{}])[0].get("localizedObjectAnnotations", []):
+        results.append({
+            "description": obj.get("name", "").lower(),
+            "score": obj.get("score", 0),
+            "source": "object",
+        })
+
+    return results
+
+
+def _is_food(description: str, score: float) -> bool:
+    """Check if a detected label is food-related and confident enough."""
+    if score < 0.3:
+        return False
+    desc_lower = description.lower()
+
+    # Exclude non-food
+    if any(excluded in desc_lower for excluded in NON_FOOD_LABELS):
+        return False
+
+    # Include if it matches food keywords or is a general food term
+    return any(kw in desc_lower for kw in FOOD_KEYWORDS) or desc_lower in FOOD_KEYWORDS
+
+
+def analyze_meal_image(image_bytes: bytes) -> list[dict]:
+    """
+    Analyze a meal photo using Cloud Vision API.
 
     Args:
         image_bytes: Raw JPEG image bytes
-        model_name: Gemini model to use (default: gemini-2.0-flash)
 
     Returns:
         List of dicts: [{"name": "...", "description": "...", "confidence": 0.85}, ...]
@@ -54,44 +154,30 @@ def analyze_meal_image(image_bytes: bytes, model_name: str = "gemini-2.0-flash")
     if not GCP_PROJECT:
         raise RuntimeError("GCP_PROJECT environment variable not set")
 
-    model = GenerativeModel(model_name)
+    # Call Cloud Vision
+    detections = _call_vision_api(image_bytes)
 
-    image_part = Part.from_data(data=image_bytes, mime_type="image/jpeg")
+    # Filter to food-related items
+    food_items = []
+    seen = set()
 
-    response = model.generate_content(
-        [image_part, PROMPT],
-        generation_config={
-            "temperature": 0.1,  # Low temp for consistent food ID
-            "max_output_tokens": 512,
-        }
-    )
+    for item in sorted(detections, key=lambda x: x["score"], reverse=True):
+        desc = item["description"]
+        score = item["score"]
 
-    text = response.text
-    return _parse_response(text)
+        if not desc:
+            continue
 
+        # Deduplicate
+        if desc in seen:
+            continue
+        seen.add(desc)
 
-def _parse_response(text: str) -> list[dict]:
-    """Parse Gemini's JSON response with fallback for malformed output."""
-    # Gemini sometimes wraps in markdown
-    text = re.sub(r"^```json\s*", "", text.strip(), flags=re.IGNORECASE)
-    text = re.sub(r"\s*```$", "", text.strip())
+        if _is_food(desc, score):
+            food_items.append({
+                "name": desc.title(),
+                "description": f"Detected via {item['source']}",
+                "confidence": round(score, 2),
+            })
 
-    try:
-        data = json.loads(text)
-        foods = data.get("foods", [])
-        # Validate structure
-        return [
-            {
-                "name": str(f.get("name", "")),
-                "description": str(f.get("description", "")),
-                "confidence": float(f.get("confidence", 0.5)),
-            }
-            for f in foods
-            if f.get("name")
-        ]
-    except (json.JSONDecodeError, ValueError, TypeError):
-        # Attempt partial extraction
-        foods = re.findall(r'"name"\s*:\s*"([^"]+)"', text)
-        if foods:
-            return [{"name": f, "description": "", "confidence": 0.5} for f in foods]
-        raise ValueError(f"Could not parse Gemini response: {text[:200]}")
+    return food_items
