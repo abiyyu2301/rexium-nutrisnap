@@ -5,8 +5,10 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-install GCP credentials
-RUN pip install google-auth
+# google-cloud-aiplatform ships its own google/__init__.py which shadows
+# google.genai from the google-genai package. Fix: force-reinstall google-genai
+# LAST so its namespace package takes precedence over any conflicting google/__init__.py.
+RUN pip install --no-cache-dir --force-reinstall --no-deps google-genai
 
 COPY backend/ .
 
