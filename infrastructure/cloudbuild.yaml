@@ -75,7 +75,7 @@ steps:
       - '--concurrency=10'
       - '--timeout=60s'
       - '--set-env-vars=GCP_PROJECT=$PROJECT_ID,GCP_LOCATION=$_REGION'
-      - '--add-secret-environment-variables=GEMINI_API_KEY=projects/$PROJECT_ID/secrets/GEMINI_API_KEY:latest'
+      - '--set-secrets=GEMINI_API_KEY=projects/$PROJECT_ID/secrets/GEMINI_API_KEY:latest'
 
   # ── Deploy frontend ────────────────────────────────────────────────────────
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
