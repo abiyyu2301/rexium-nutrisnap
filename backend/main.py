@@ -163,7 +163,7 @@ async def analyze(image: UploadFile = File(...)):
 
     # 3. Gemini vision
     try:
-        raw_foods = analyze_meal_image(image_bytes)
+        raw_foods, total_grams = analyze_meal_image(image_bytes)
     except Exception as e:
         raise HTTPException(500, f"Vision API error: {str(e)}")
 

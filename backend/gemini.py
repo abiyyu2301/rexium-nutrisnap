@@ -31,7 +31,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
 SYSTEM_PROMPT = """You are NutriSnap, an expert food identification and nutrition estimation AI.
 Your task is to analyze meal photos and identify all distinct food and drink items present.
 
-For each item you identify, you must estimate the portion size using visual cues
+CRITICAL — ONE PLATE, NOT MULTIPLE PLATES:
+- All items you list belong to ONE single plate/meal/hand.
+- Do NOT list the same dish split into parts (e.g., do NOT list "hainanese chicken rice" AND "fragrant rice" AND "roasted chicken" separately — these are the SAME dish. List it as ONE entry: "hainanese chicken rice" with ONE combined portion).
+- The sum of ALL portion_grams_estimate values must be realistic for a single meal: 200g–500g depending on plate size. If your individual portions sum to more than 500g, you are double-counting — consolidate.
+- A standard dinner plate (one person) = 250-350g total. A big plate = 350-500g.
+
+For each item, estimate the portion size using visual cues
 (plate size, compare to fist/hand, typical serving conventions).
 
 OUTPUT FORMAT — respond ONLY with valid JSON in this exact structure:
@@ -45,12 +51,12 @@ OUTPUT FORMAT — respond ONLY with valid JSON in this exact structure:
       "confidence": number between 0.0 and 1.0
     }
   ],
+  "total_grams_estimate": number in grams — must be realistic for ONE plate (250-500g max),
   "overall_confidence": number between 0.0 and 1.0,
   "notes": "any observations about image quality, lighting, or ambiguity"
 }
 
 PORTION ESTIMATION GUIDELINES:
-- A standard dinner plate = ~250-300g total
 - A fist = ~200g (use as reference for rice, noodles, etc.)
 - A tablespoon = ~15g (for sauces, gravies)
 - A palm-sized portion of meat/fish = ~85-100g
@@ -63,10 +69,12 @@ IDENTIFICATION RULES:
 - Be as specific as possible: not just "rice" but "steamed white rice (nasi putih)"
 - Not just "curry" but "chicken curry (kari ayam)" or "rendang"
 - Include the preparation method if visible: fried, steamed, grilled, etc.
+- List a dish AS ONE ENTRY — do NOT decompose a dish into rice+protein+sauce separately
 - If you're uncertain between two items, list the most likely one and note alternatives
 - Do NOT invent items you cannot see — only report what is actually in the image
 - Indonesian foods are common — watch for: nasi goreng, mie goreng, soto, rendang, satay, gado-gado, tempeh, tahu, sambal
-- Beverages: note if visible (coffee, tea, juice, water) and estimate volume"""
+- Beverages: note if visible (coffee, tea, juice, water) and estimate volume
+- Do NOT respond with Chinese characters (no \u4e00-\u9fff range) — use English or Indonesian names only"""
 
 
 # ── Image Preprocessing ────────────────────────────────────────────────────────
@@ -106,15 +114,11 @@ def _get_access_token() -> str:
 
 # ── Core Analysis ──────────────────────────────────────────────────────────────
 
-def analyze_meal_image(image_bytes: bytes) -> list[dict]:
+def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]:
     """
     Analyze a meal photo using Vertex AI Gemini 1.5 Flash (via google.genai SDK).
-
-    Args:
-        image_bytes: Raw JPEG image bytes.
-
-    Returns:
-        List of dicts: [{"name": "...", "description": "...", "portion_grams_estimate": 150, "confidence": 0.92}, ...]
+    Returns (foods_list, total_grams_estimate) where total_grams is the model's
+    own top-level estimate for the full plate (useful for sanity-checking sums).
     """
     if not GCP_PROJECT and not GEMINI_API_KEY:
         raise RuntimeError(
@@ -199,9 +203,9 @@ def analyze_meal_image(image_bytes: bytes) -> list[dict]:
         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
 
     # ── Parse JSON response ─────────────────────────────────────────────────────
-    foods = _parse_gemini_response(raw_text)
+    foods, total_grams = _parse_gemini_response(raw_text)
 
-    return foods
+    return foods, total_grams
 
 
 def _parse_gemini_response(raw_text: str) -> list[dict]:
@@ -242,4 +246,7 @@ def _parse_gemini_response(raw_text: str) -> list[dict]:
             "confidence": float(item.get("confidence", 0.5)),
         })
 
-    return results
+    # Extract top-level total for sanity-checking portion sums
+    total_grams = data.get("total_grams_estimate")
+
+    return results, total_grams
