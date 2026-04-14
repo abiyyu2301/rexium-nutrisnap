@@ -101,10 +101,10 @@ async def health():
 
 
 @app.post("/analyze", response_model=AnalysisResponse)
-async def analyze(file: UploadFile = File(...)):
+async def analyze(image: UploadFile = File(...)):
     # 1. Validate
     try:
-        image_bytes = await file.read()
+        image_bytes = await image.read()
     except Exception:
         raise HTTPException(400, "Could not read uploaded file")
 
@@ -112,8 +112,8 @@ async def analyze(file: UploadFile = File(...)):
         raise HTTPException(413, "Image too large (max 10MB)")
 
     allowed = {"image/jpeg", "image/png", "image/webp"}
-    if file.content_type not in allowed:
-        raise HTTPException(400, f"Unsupported file type: {file.content_type}")
+    if image.content_type not in allowed:
+        raise HTTPException(400, f"Unsupported file type: {image.content_type}")
 
     # 2. Preprocess
     image_bytes = preprocess_image(image_bytes)
