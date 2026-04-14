@@ -1,1 +1,217 @@
-/* page.module.css — importable by page.tsx if needed */
+/* page.module.css — Scoped component classes for page.tsx */
+
+/* Shared page layout */
+.main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 16px 100px;
+  min-height: 100vh;
+}
+
+/* Header */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg);
+  padding: 16px 0 12px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--green);
+  letter-spacing: -0.5px;
+}
+
+/* Hidden file inputs */
+.hiddenInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Recent section */
+.recentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.recentLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-sec);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 4px;
+}
+
+/* Result section */
+.resultSection {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.resultImageWrapper {
+  position: relative;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.resultImage {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  display: block;
+}
+
+.resultBadge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+}
+
+.resultTimestamp {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  color: white;
+  font-size: 0.7rem;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+}
+
+/* Calorie card */
+.calorieCard {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.calorieInfo { flex: 1; }
+
+.calorieNumber {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--green);
+  transition: color 0.3s;
+}
+.calorieNumber.warn { color: var(--calorie-warn); }
+.calorieNumber.over { color: var(--calorie-over); }
+
+.calorieKcal {
+  font-size: 0.9rem;
+  color: var(--text-sec);
+  margin-top: 2px;
+}
+
+.calorieRda {
+  font-size: 0.8rem;
+  color: var(--text-sec);
+  margin-top: 4px;
+}
+.calorieRda span { font-weight: 600; color: var(--text); }
+
+/* Food card */
+.foodCard {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.foodCardTitle {
+  padding: 16px 20px 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-sec);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.foodList {
+  list-style: none;
+}
+
+/* Action row */
+.actionRow {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.anotherBtn {
+  flex: 1;
+  background: var(--green);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: inherit;
+  transition: background 0.15s, transform 0.1s;
+}
+.anotherBtn:hover { background: var(--green-dark); }
+.anotherBtn:active { transform: scale(0.98); }
+
+/* Error */
+.errorSection {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.errorCard {
+  background: #FFEBEE;
+  border: 1px solid #FFCDD2;
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  text-align: center;
+}
+
+.errorIcon { font-size: 2rem; margin-bottom: 8px; }
+.errorTitle { font-weight: 700; color: var(--error); margin-bottom: 6px; font-size: 1rem; }
+.errorMsg { color: #7F1D1D; font-size: 0.85rem; margin-bottom: 20px; }
+
+.retryBtn {
+  background: var(--error);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  padding: 12px 28px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.95rem;
+  min-height: 44px;
+}
+.retryBtn:hover { background: #D32F2F; }
