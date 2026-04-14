@@ -31,10 +31,12 @@ steps:
 
   # ── Build frontend ─────────────────────────────────────────────────────────
   # NEXT_PUBLIC_API_URL must be passed here at build time (baked into client bundle)
+  # --no-cache ensures npm run build re-executes with the new build arg (no stale layers)
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-frontend'
     args:
       - build
+      - '--no-cache'
       - '-t'
       - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/frontend:$COMMIT_SHA'
       - '-t'
