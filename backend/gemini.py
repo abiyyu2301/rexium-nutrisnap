@@ -6,8 +6,8 @@ Two-step approach:
   Step 2: main.py matches food names against the Firestore nutrition DB
 
 Authentication via:
-  - Service account (Cloud Run / VM): google.auth.default() — no key needed
-  - Local dev: GOOGLE_API_KEY env var (direct Gemini API)
+  - Service account (Cloud Run / VM): google.auth.default() → google.genai Client(vertexai=True)
+  - Local dev: GOOGLE_API_KEY env var (direct Gemini API via REST)
 """
 import base64
 import json
@@ -17,19 +17,31 @@ from io import BytesIO
 from typing import Optional
 
 import google.auth
-import vertexai
 from PIL import Image
-from vertexai.generative_models import GenerativeModel, Part
 
-# ── Vertex AI Init ────────────────────────────────────────────────────────────
+# ── google.genai Client (new SDK — not the deprecated google-cloud-aiplatform) ──
 
 GCP_PROJECT = os.getenv("GCP_PROJECT", os.getenv("GCP_PROJECT_ID", ""))
 GCP_LOCATION = os.getenv("GCP_LOCATION", "asia-southeast1")
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
-# Initialize Vertex AI (uses service account on Cloud Run)
-if GCP_PROJECT and not GEMINI_API_KEY:
-    vertexai.init(project=GCP_PROJECT, location=GCP_LOCATION)
+# Lazy-load the google.genai client — only init when actually called (not at import time)
+_client = None
+
+def _get_genai_client():
+    """Get or create a google.genai Client using service account credentials."""
+    global _client
+    if _client is None:
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        _client = google.genai.Client(
+            vertexai=True,
+            project=GCP_PROJECT,
+            location=GCP_LOCATION,
+            credentials=credentials,
+        )
+    return _client
 
 
 # ── System + User Prompts ──────────────────────────────────────────────────────
@@ -75,7 +87,7 @@ IDENTIFICATION RULES:
 - Beverages: note if visible (coffee, tea, juice, water) and estimate volume"""
 
 
-# ── Image Preprocessing ───────────────────────────────────────────────────────
+# ── Image Preprocessing ────────────────────────────────────────────────────────
 
 def _preprocess_image(image_bytes: bytes, max_pixels: int = 768) -> bytes:
     """
@@ -101,7 +113,7 @@ def _preprocess_image(image_bytes: bytes, max_pixels: int = 768) -> bytes:
 # ── Token Fetch (for direct API calls) ────────────────────────────────────────
 
 def _get_access_token() -> str:
-    """Get OAuth2 access token for Vertex AI API calls."""
+    """Get OAuth2 access token for direct Gemini API calls."""
     credentials, _ = google.auth.default(
         scopes=["https://www.googleapis.com/auth/cloud-platform"]
     )
@@ -114,7 +126,7 @@ def _get_access_token() -> str:
 
 def analyze_meal_image(image_bytes: bytes) -> list[dict]:
     """
-    Analyze a meal photo using Vertex AI Gemini 1.5 Flash.
+    Analyze a meal photo using Vertex AI Gemini 1.5 Flash (via google.genai SDK).
 
     Args:
         image_bytes: Raw JPEG image bytes.
@@ -131,21 +143,23 @@ def analyze_meal_image(image_bytes: bytes) -> list[dict]:
     # Preprocess image (reduces size, improves reliability)
     image_bytes = _preprocess_image(image_bytes)
 
-    # ── Route: Vertex AI (service account) or Direct Gemini API ──────────────
+    # ── Route: google.genai SDK (service account) or Direct Gemini REST API ────
 
     if GCP_PROJECT and not GEMINI_API_KEY:
-        # Vertex AI via SDK (uses service account on Cloud Run)
-        model = GenerativeModel(
-            model_name="gemini-1.5-flash-002",
-            system_instruction=[SYSTEM_PROMPT],
-        )
-        image_part = Part.from_data(
-            data=image_bytes,
-            mime_type="image/jpeg",
-        )
-        response = model.generate_content(
-            [image_part],
-            generation_config={
+        # Vertex AI via google.genai SDK (uses service account on Cloud Run)
+        # Uses ADC: credentials picked up from metadata server on Cloud Run
+        client = _get_genai_client()
+        image_part = {
+            "inline_data": {
+                "data": base64.b64encode(image_bytes).decode(),
+                "mime_type": "image/jpeg",
+            }
+        }
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=[image_part],
+            config={
+                "system_instruction": SYSTEM_PROMPT,
                 "response_mime_type": "application/json",
                 "temperature": 0.3,
                 "max_output_tokens": 2048,
@@ -154,7 +168,7 @@ def analyze_meal_image(image_bytes: bytes) -> list[dict]:
         raw_text = response.text
 
     else:
-        # Direct Gemini API (for local dev with API key)
+        # Direct Gemini REST API (for local dev with API key)
         import requests as _requests
 
         token = _get_access_token() if not GEMINI_API_KEY else None
@@ -182,23 +196,12 @@ def analyze_meal_image(image_bytes: bytes) -> list[dict]:
             },
         }
 
-        # Vertex AI REST endpoint
-        vertex_url = (
-            f"https://{GCP_LOCATION}-aiplatform.googleapis.com/v1/"
-            f"projects/{GCP_PROJECT}/locations/{GCP_LOCATION}"
-            f":publishDocuments"
-        )
-        # Actually for generateContent it's a different endpoint
-        model_name = "gemini-1.5-flash-002"
-
         api_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}"
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash"
             f":generateContent?key={GEMINI_API_KEY}"
         )
 
-        headers = {
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
@@ -207,7 +210,7 @@ def analyze_meal_image(image_bytes: bytes) -> list[dict]:
         data = resp.json()
         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
 
-    # ── Parse JSON response ──────────────────────────────────────────────────
+    # ── Parse JSON response ─────────────────────────────────────────────────────
     foods = _parse_gemini_response(raw_text)
 
     return foods

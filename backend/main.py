@@ -106,6 +106,7 @@ async def health():
 @app.get("/test-gemini")
 async def test_gemini(model: str = "gemini-1.5-flash"):
     """Test Gemini access via direct REST API call."""
+    import google.auth
     import requests
 
     credentials, project = google.auth.default(
@@ -154,7 +155,10 @@ async def analyze(image: UploadFile = File(...)):
         raise HTTPException(400, f"Unsupported file type: {image.content_type}")
 
     # 2. Preprocess
-    image_bytes = preprocess_image(image_bytes)
+    try:
+        image_bytes = preprocess_image(image_bytes)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid image data: {str(e)}")
 
     # 3. Gemini vision
     try:
