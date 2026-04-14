@@ -156,7 +156,7 @@ def analyze_meal_image(image_bytes: bytes) -> list[dict]:
             }
         }
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=[image_part],
             config={
                 "system_instruction": SYSTEM_PROMPT,
@@ -197,7 +197,7 @@ def analyze_meal_image(image_bytes: bytes) -> list[dict]:
         }
 
         api_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash"
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash"
             f":generateContent?key={GEMINI_API_KEY}"
         )
 

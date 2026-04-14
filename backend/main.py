@@ -104,12 +104,12 @@ async def health():
 
 
 @app.get("/test-gemini")
-async def test_gemini(model: str = "gemini-1.5-flash"):
-    """Test Gemini access via direct REST API call."""
+async def test_gemini(model: str = "gemini-2.5-flash"):
+    """Test Gemini access via Vertex AI REST API."""
     import google.auth
     import requests
 
-    credentials, project = google.auth.default(
+    credentials, _ = google.auth.default(
         scopes=["https://www.googleapis.com/auth/cloud-platform"]
     )
     auth_req = google.auth.transport.requests.Request()
@@ -117,11 +117,12 @@ async def test_gemini(model: str = "gemini-1.5-flash"):
     token = credentials.token
 
     results = {}
-    for location in ["us-central1", "asia-southeast1"]:
+    # asia-southeast1 is the configured location; us-central1 as fallback
+    for location in ["asia-southeast1", "us-central1"]:
         endpoint = f"https://{location}-aiplatform.googleapis.com/v1/projects/rexium-nutrisnap/locations/{location}/publishers/google/models/{model}:generateContent"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": "Reply: OK"}]}],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 10}
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 10},
         }
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         try:
