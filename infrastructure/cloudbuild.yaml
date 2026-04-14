@@ -3,6 +3,7 @@
 
 substitutions:
   _REGION: asia-southeast1
+  _BACKEND_URL: https://nutrisnap-api-axu5c6jrpa-as.a.run.app
 
 steps:
   # ── Build backend ──────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ steps:
       - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/backend'
 
   # ── Build frontend ─────────────────────────────────────────────────────────
+  # NEXT_PUBLIC_API_URL must be passed here at build time (baked into client bundle)
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-frontend'
     args:
@@ -39,6 +41,8 @@ steps:
       - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/frontend:latest'
       - '-f'
       - 'infrastructure/Dockerfile.frontend'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_API_URL=$_BACKEND_URL'
       - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
@@ -89,7 +93,6 @@ steps:
       - '--cpu=1'
       - '--min-instances=0'
       - '--max-instances=10'
-      - '--set-env-vars=NEXT_PUBLIC_API_URL=https://nutrisnap-api-1012672992257.asia-southeast1.run.app'
 
 images:
   - '$_REGION-docker.pkg.dev/$PROJECT_ID/nutrisnap-images/backend:$COMMIT_SHA'
