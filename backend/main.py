@@ -19,6 +19,9 @@ from pydantic import BaseModel
 
 from gemini import analyze_meal_image
 from nutrition import NutritionDB
+import base64
+import google.auth
+import requests
 
 app = FastAPI(title="NutriSnap API", version="1.0.0")
 
@@ -100,6 +103,41 @@ async def health():
     return {"status": "ok", "version": "1.0.0"}
 
 
+@app.get("/test-gemini")
+async def test_gemini(model: str = "gemini-1.5-flash"):
+    """Test Gemini access via direct REST API call."""
+    import requests
+
+    credentials, project = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    auth_req = google.auth.transport.requests.Request()
+    credentials.refresh(auth_req)
+    token = credentials.token
+
+    results = {}
+    for location in ["us-central1", "asia-southeast1"]:
+        endpoint = f"https://{location}-aiplatform.googleapis.com/v1/projects/rexium-nutrisnap/locations/{location}/publishers/google/models/{model}:generateContent"
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": "Reply: OK"}]}],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 10}
+        }
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        try:
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=15)
+            data = resp.json()
+            if resp.status_code == 200:
+                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                results[location] = {"status": "ok", "response": text}
+                return results[location]
+            else:
+                results[location] = {"status": resp.status_code, "error": str(data)[:120]}
+        except Exception as e:
+            results[location] = {"status": "error", "error": str(e)[:80]}
+
+    return {"status": "all_failed", "attempts": results}
+
+
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze(image: UploadFile = File(...)):
     # 1. Validate
@@ -144,6 +182,7 @@ async def analyze(image: UploadFile = File(...)):
     for item in raw_foods:
         name = item.get("name", "").lower()
         confidence = float(item.get("confidence", 0.5))
+        portion_grams = float(item.get("portion_grams_estimate", 100))
 
         # Skip very generic labels
         if name in GENERIC_LABELS or len(name) < 3:
@@ -165,15 +204,18 @@ async def analyze(image: UploadFile = File(...)):
                 if any(b in best_name for b in BLOCKLIST_KEYWORDS):
                     continue
 
+            # Scale nutrition by portion (data is per 100g)
+            portion_scale = portion_grams / 100.0
+
             identified.append(IdentifiedFood(
                 raw_name=name,
                 matched_id=best.get("id"),
                 matched_name=best.get("food_name"),
-                calories_kcal=best.get("calories_kcal"),
-                protein_g=best.get("protein_g"),
-                carbs_g=best.get("carbs_g"),
-                fat_g=best.get("fat_g"),
-                fiber_g=best.get("fiber_g"),
+                calories_kcal=round(best.get("calories_kcal", 0) * portion_scale, 1),
+                protein_g=round(best.get("protein_g", 0) * portion_scale, 1),
+                carbs_g=round(best.get("carbs_g", 0) * portion_scale, 1),
+                fat_g=round(best.get("fat_g", 0) * portion_scale, 1),
+                fiber_g=round((best.get("fiber_g") or 0) * portion_scale, 1),
                 confidence=round(confidence, 2),
                 source=best.get("source"),
             ))
