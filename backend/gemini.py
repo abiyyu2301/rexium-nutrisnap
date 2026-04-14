@@ -7,7 +7,7 @@ Two-step approach:
 
 Authentication via:
   - Service account (Cloud Run / VM): google.auth.default() → google.genai Client(vertexai=True)
-  - Local dev: GOOGLE_API_KEY env var (direct Gemini API via REST)
+  - Local dev: GEMINI_API_KEY env var (direct Gemini API)
 """
 import base64
 import json
