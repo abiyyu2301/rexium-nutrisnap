@@ -5,10 +5,10 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# google-cloud-aiplatform ships its own google/__init__.py which shadows
-# google.genai from the google-genai package. Fix: force-reinstall google-genai
-# LAST so its namespace package takes precedence over any conflicting google/__init__.py.
-RUN pip install --no-cache-dir --force-reinstall --no-deps google-genai
+# google-cloud-aiplatform ships its own google/__init__.py that shadows
+# google.genai from the google-genai package. We don't use it — we migrated
+# to google.genai. Uninstall it so google.genai becomes accessible.
+RUN pip uninstall -y google-cloud-aiplatform || true
 
 COPY backend/ .
 

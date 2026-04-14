@@ -23,25 +23,7 @@ from PIL import Image
 
 GCP_PROJECT = os.getenv("GCP_PROJECT", os.getenv("GCP_PROJECT_ID", ""))
 GCP_LOCATION = os.getenv("GCP_LOCATION", "asia-southeast1")
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-
-# Lazy-load the google.genai client — only init when actually called (not at import time)
-_client = None
-
-def _get_genai_client():
-    """Get or create a google.genai Client using service account credentials."""
-    global _client
-    if _client is None:
-        credentials, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        _client = google.genai.Client(
-            vertexai=True,
-            project=GCP_PROJECT,
-            location=GCP_LOCATION,
-            credentials=credentials,
-        )
-    return _client
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
 
 
 # ── System + User Prompts ──────────────────────────────────────────────────────
@@ -148,7 +130,13 @@ def analyze_meal_image(image_bytes: bytes) -> list[dict]:
     if GCP_PROJECT and not GEMINI_API_KEY:
         # Vertex AI via google.genai SDK (uses service account on Cloud Run)
         # Uses ADC: credentials picked up from metadata server on Cloud Run
-        client = _get_genai_client()
+        import google.genai as genai_module
+        client = genai_module.Client(
+            vertexai=True,
+            project=GCP_PROJECT,
+            location=GCP_LOCATION,
+            credentials=credentials,
+        )
         image_part = {
             "inline_data": {
                 "data": base64.b64encode(image_bytes).decode(),
