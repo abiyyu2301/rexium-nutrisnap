@@ -273,6 +273,47 @@ async def analyze(image: UploadFile = File(...)):
             return min(grams, 250)
         return grams
 
+    # ── DISH OVERRIDES: force-consistent mapping for ambiguous Gemini outputs ─
+    # When Gemini returns variant names for the same dish, these overrides
+    # canonicalize the DB lookup so identical images always get identical results.
+    # Key: substring pattern in Gemini's raw food name (lower).
+    # Value: (db_id, db_food_name, {nutrition per 100g})
+    _DISH_NUTRITION = {
+        "soto":       dict(id="tkpi_NEW_013", name="Soto Ayam",
+                           calories_kcal=237.5, protein_g=18.8, carbs_g=20.0, fat_g=9.5, fiber_g=1.0),
+        "mie ayam":   dict(id="tkpi_0085",   name="Mie Ayam",
+                           calories_kcal=178.5, protein_g=10.9, carbs_g=18.4, fat_g=6.9, fiber_g=0.0),
+        "nasi goreng":dict(id="tkpi_NEW_015", name="Nasi Goreng",
+                           calories_kcal=400.0, protein_g=12.0, carbs_g=60.0, fat_g=14.0, fiber_g=2.0),
+        "rendang":    dict(id="tkpi_0800",   name="Rendang sapi, masakan",
+                           calories_kcal=193.0, protein_g=22.6, carbs_g=7.8, fat_g=7.9, fiber_g=0.0),
+        "gado":       dict(id="tkpi_0413",   name="Gado-gado",
+                           calories_kcal=137.0, protein_g=6.1,  carbs_g=21.0, fat_g=3.2, fiber_g=5.2),
+        "satay":      dict(id="tkpi_NEW_010",name="Sate Ayam",
+                           calories_kcal=348.0, protein_g=40.0, carbs_g=6.0, fat_g=18.0, fiber_g=0.0),
+        "sambal kacang": dict(id="tkpi_NEW_020", name="Sambal Kacang",
+                           calories_kcal=290.0, protein_g=12.0, carbs_g=20.0, fat_g=19.0, fiber_g=4.0),
+        "ketupat":    dict(id="tkpi_NEW_023",name="Ketupat",
+                           calories_kcal=123.0, protein_g=2.4,  carbs_g=26.7, fat_g=0.3, fiber_g=1.4),
+        "nasi putih": dict(id="tkpi_0001",   name="Nasi",
+                           calories_kcal=180.0, protein_g=3.0,  carbs_g=39.8, fat_g=0.3, fiber_g=0.3),
+        "white rice": dict(id="tkpi_0001",   name="Nasi",
+                           calories_kcal=180.0, protein_g=3.0,  carbs_g=39.8, fat_g=0.3, fiber_g=0.3),
+        "egg":        dict(id="egg",          name="EGG",
+                           calories_kcal=155.0, protein_g=13.3, carbs_g=1.1, fat_g=10.6, fiber_g=0.0),
+        "telur":      dict(id="egg",          name="EGG",
+                           calories_kcal=155.0, protein_g=13.3, carbs_g=1.1, fat_g=10.6, fiber_g=0.0),
+        "steamed rice": dict(id="tkpi_0001", name="Nasi",
+                           calories_kcal=180.0, protein_g=3.0,  carbs_g=39.8, fat_g=0.3, fiber_g=0.3),
+    }
+
+    def _dish_override(name_lower: str):
+        """Return override nutrition dict if raw name matches a known pattern."""
+        for pattern, nutr in _DISH_NUTRITION.items():
+            if pattern in name_lower:
+                return nutr
+        return None
+
     identified = []
     for item in raw_foods:
         name = item.get("name", "").lower()
@@ -388,20 +429,42 @@ async def analyze(image: UploadFile = File(...)):
                 if any(b in best_name for b in BLOCKLIST_KEYWORDS):
                     continue
 
+            # ── DETERMINISM FIX: override DB result for known ambiguous dishes ─
+            # Gemini's vision is non-deterministic even with seed=42 for ambiguous
+            # food photos. Apply a hard override so identical images always produce
+            # identical outputs, regardless of what Gemini's raw name is.
+            override = _dish_override(ingredient_name)
+            if override:
+                best = override
+                best_id = override["id"]
+                best_name = override["name"]
+                best_cal_per_100 = override["calories_kcal"]
+                best_protein = override.get("protein_g", 0)
+                best_carbs = override.get("carbs_g", 0)
+                best_fat = override.get("fat_g", 0)
+                best_fiber = override.get("fiber_g", 0)
+                best_source = "override"
+            else:
+                best_protein = best.get("protein_g", 0)
+                best_carbs = best.get("carbs_g", 0)
+                best_fat = best.get("fat_g", 0)
+                best_fiber = best.get("fiber_g", 0)
+                best_source = best.get("source")
+
             # Scale nutrition by portion (data is per 100g)
             portion_scale = ing_portion / 100.0
 
             identified.append(IdentifiedFood(
                 raw_name=ingredient_name,
-                matched_id=best.get("id"),
-                matched_name=best.get("food_name"),
-                calories_kcal=round((best.get("calories_kcal") or 0) * portion_scale, 1),
-                protein_g=round((best.get("protein_g") or 0) * portion_scale, 1),
-                carbs_g=round((best.get("carbs_g") or 0) * portion_scale, 1),
-                fat_g=round((best.get("fat_g") or 0) * portion_scale, 1),
-                fiber_g=round((best.get("fiber_g") or 0) * portion_scale, 1),
+                matched_id=best_id,
+                matched_name=best_name,
+                calories_kcal=round(best_cal_per_100 * portion_scale, 1),
+                protein_g=round((best_protein or 0) * portion_scale, 1),
+                carbs_g=round((best_carbs or 0) * portion_scale, 1),
+                fat_g=round((best_fat or 0) * portion_scale, 1),
+                fiber_g=round((best_fiber or 0) * portion_scale, 1),
                 confidence=round(confidence, 2),
-                source=best.get("source"),
+                source=best_source,
             ))
 
     # Deduplicate by matched_id, keeping the best (highest confidence) match

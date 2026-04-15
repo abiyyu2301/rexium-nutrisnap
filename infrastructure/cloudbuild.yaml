@@ -74,7 +74,8 @@ steps:
       - '--max-instances=10'
       - '--concurrency=10'
       - '--timeout=60s'
-      - '--set-env-vars=GCP_PROJECT=$PROJECT_ID,GCP_LOCATION=$_REGION'
+      # Note: Do NOT set GCP_PROJECT here — forces Vertex AI path which lacks seed support.
+      # Let the app detect GEMINI_API_KEY and use the direct Gemini API path instead.
       - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
 
   # ── Deploy frontend ────────────────────────────────────────────────────────
