@@ -143,124 +143,87 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
 
     # ── Route: google.genai SDK (service account) or Direct Gemini REST API ────
 
-    if GCP_PROJECT and not GEMINI_API_KEY:
-        # Vertex AI via google.genai SDK (uses service account on Cloud Run)
-        # Uses ADC: credentials picked up from metadata server on Cloud Run
-        import google.genai as genai_module
-        client = genai_module.Client(
-            vertexai=True,
-            project=GCP_PROJECT,
-            location=GCP_LOCATION,
-            credentials=credentials,
-        )
-        image_part = {
-            "inline_data": {
-                "data": base64.b64encode(image_bytes).decode(),
-                "mime_type": "image/jpeg",
-            }
-        }
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[image_part],
-            config={
-                "system_instruction": SYSTEM_PROMPT,
-                "response_mime_type": "application/json",
-                "response_schema": {
-                    "type": "object",
-                    "properties": {
-                        "foods": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "description": {"type": "string"},
-                                    "portion_description": {"type": "string"},
-                                    "portion_grams_estimate": {"type": "number"},
-                                    "confidence": {"type": "number"},
-                                },
-                                "required": ["name", "description", "portion_grams_estimate", "confidence"],
-                            },
-                        },
-                        "total_grams_estimate": {"type": "number"},
-                        "overall_confidence": {"type": "number"},
-                        "notes": {"type": "string"},
-                    },
-                    "required": ["foods", "total_grams_estimate", "overall_confidence"],
-                },
-                "temperature": 0.1,
-                "seed": 42,
-                "max_output_tokens": 4096,
-            },
-        )
-        raw_text = response.text
+    # ── Direct Vertex AI REST API ───────────────────────────────────────────────
+    # Service account (Cloud Run): google.auth.default() → bearer token
+    # Local dev: GEMINI_API_KEY env var → direct Gemini API
+    # The google.genai SDK path was removed — direct REST is more reliable.
+    import requests as _requests
 
-    else:
-        # Direct Gemini REST API (for local dev with API key)
-        import requests as _requests
-
-        token = _get_access_token() if not GEMINI_API_KEY else None
-        image_b64 = base64.b64encode(image_bytes).decode()
-
-        payload = {
-            "contents": [{
-                "role": "user",
-                "parts": [
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": image_b64,
-                        }
-                    }
-                ]
-            }],
-            "system_instruction": {
-                "parts": [{"text": SYSTEM_PROMPT}]
-            },
-            "generation_config": {
-                "response_mime_type": "application/json",
-                "response_schema": {
-                    "type": "object",
-                    "properties": {
-                        "foods": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "description": {"type": "string"},
-                                    "portion_description": {"type": "string"},
-                                    "portion_grams_estimate": {"type": "number"},
-                                    "confidence": {"type": "number"},
-                                },
-                                "required": ["name", "description", "portion_grams_estimate", "confidence"],
-                            },
-                        },
-                        "total_grams_estimate": {"type": "number"},
-                        "overall_confidence": {"type": "number"},
-                        "notes": {"type": "string"},
-                    },
-                    "required": ["foods", "total_grams_estimate", "overall_confidence"],
-                },
-                "temperature": 0.1,
-                "seed": 42,
-                "max_output_tokens": 4096,
-            },
-        }
-
+    token = None
+    if GEMINI_API_KEY:
         api_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash"
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp"
             f":generateContent?key={GEMINI_API_KEY}"
         )
+    else:
+        # Vertex AI via service account — get bearer token from ADC
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        auth_req = google.auth.transport.requests.Request()
+        creds.refresh(auth_req)
+        token = creds.token
+        # Route through us-central1 (always supported) or asia-southeast1
+        api_url = (
+            f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
+            f"projects/rexium-nutrisnap/locations/us-central1/"
+            f"publishers/google/models/gemini-2.0-flash-exp:generateContent"
+        )
 
-        headers = {"Content-Type": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+    image_b64 = base64.b64encode(image_bytes).decode()
+    payload = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": image_b64,
+                    }
+                }
+            ]
+        }],
+        "system_instruction": {
+            "parts": [{"text": SYSTEM_PROMPT}]
+        },
+        "generation_config": {
+            "response_mime_type": "application/json",
+            "response_schema": {
+                "type": "object",
+                "properties": {
+                    "foods": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "description": {"type": "string"},
+                                "portion_description": {"type": "string"},
+                                "portion_grams_estimate": {"type": "number"},
+                                "confidence": {"type": "number"},
+                            },
+                            "required": ["name", "description", "portion_grams_estimate", "confidence"],
+                        },
+                    },
+                    "total_grams_estimate": {"type": "number"},
+                    "overall_confidence": {"type": "number"},
+                    "notes": {"type": "string"},
+                },
+                "required": ["foods", "total_grams_estimate", "overall_confidence"],
+            },
+            "temperature": 0.05,      # Very low for consistency
+            "max_output_tokens": 4096,
+        },
+    }
 
-        resp = _requests.post(api_url, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    resp = _requests.post(api_url, headers=headers, json=payload, timeout=45)
+    resp.raise_for_status()
+    data = resp.json()
+    raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
 
     # ── Parse JSON response ─────────────────────────────────────────────────────
     foods, total_grams = _parse_gemini_response(raw_text)

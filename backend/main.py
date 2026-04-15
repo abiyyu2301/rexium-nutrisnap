@@ -273,45 +273,117 @@ async def analyze(image: UploadFile = File(...)):
             return min(grams, 250)
         return grams
 
-    # ── DISH OVERRIDES: force-consistent mapping for ambiguous Gemini outputs ─
-    # When Gemini returns variant names for the same dish, these overrides
-    # canonicalize the DB lookup so identical images always get identical results.
-    # Key: substring pattern in Gemini's raw food name (lower).
-    # Value: (db_id, db_food_name, {nutrition per 100g})
+    # ── DISH OVERRIDES: force-consistent nutrition + portions for ambiguous outputs ─
+    # Gemini's vision is non-deterministic — it sometimes returns variant names
+    # ("nasi" vs "nasi goreng") or varying portion estimates for the same image.
+    # These overrides canonicalize both the nutrition lookup AND the portion size
+    # so identical images always produce identical results.
+    #
+    # Each entry: (id, name, nutrition_per_100g, fixed_grams)
+    # When a raw name matches, we use the FIXED portion instead of Gemini's estimate.
     _DISH_NUTRITION = {
-        "soto":       dict(id="tkpi_NEW_013", name="Soto Ayam",
-                           calories_kcal=237.5, protein_g=18.8, carbs_g=20.0, fat_g=9.5, fiber_g=1.0),
-        "mie ayam":   dict(id="tkpi_0085",   name="Mie Ayam",
-                           calories_kcal=178.5, protein_g=10.9, carbs_g=18.4, fat_g=6.9, fiber_g=0.0),
-        "nasi goreng":dict(id="tkpi_NEW_015", name="Nasi Goreng",
-                           calories_kcal=400.0, protein_g=12.0, carbs_g=60.0, fat_g=14.0, fiber_g=2.0),
-        "rendang":    dict(id="tkpi_0800",   name="Rendang sapi, masakan",
-                           calories_kcal=193.0, protein_g=22.6, carbs_g=7.8, fat_g=7.9, fiber_g=0.0),
-        "gado":       dict(id="tkpi_0413",   name="Gado-gado",
-                           calories_kcal=137.0, protein_g=6.1,  carbs_g=21.0, fat_g=3.2, fiber_g=5.2),
-        "satay":      dict(id="tkpi_NEW_010",name="Sate Ayam",
-                           calories_kcal=348.0, protein_g=40.0, carbs_g=6.0, fat_g=18.0, fiber_g=0.0),
+        # Rice dishes — note: "fried rice" and "steamed rice" patterns come BEFORE
+        # generic "rice" so they match first (sorted by key length descending in code)
+        "nasi goreng":    dict(id="tkpi_NEW_015", name="Nasi Goreng",
+                               cal=400, protein=12.0, carbs=60.0, fat=14.0, fiber=2.0,
+                               fixed_g=200),
+        "fried rice":    dict(id="tkpi_NEW_015", name="Nasi Goreng",
+                               cal=400, protein=12.0, carbs=60.0, fat=14.0, fiber=2.0,
+                               fixed_g=200),
+        "nasi putih":    dict(id="tkpi_0001",   name="Nasi",
+                               cal=180, protein=3.0, carbs=39.8, fat=0.3, fiber=0.3,
+                               fixed_g=200),
+        "steamed white rice": dict(id="tkpi_0001", name="Nasi",
+                               cal=180, protein=3.0, carbs=39.8, fat=0.3, fiber=0.3,
+                               fixed_g=200),
+        "white rice":    dict(id="tkpi_0001",   name="Nasi",
+                               cal=180, protein=3.0, carbs=39.8, fat=0.3, fiber=0.3,
+                               fixed_g=200),
+        "steamed rice":  dict(id="tkpi_0001",   name="Nasi",
+                               cal=180, protein=3.0, carbs=39.8, fat=0.3, fiber=0.3,
+                               fixed_g=200),
+        # Generic rice — smaller portion since it often appears as part of a combo
+        "rice":          dict(id="tkpi_0001",   name="Nasi",
+                               cal=180, protein=3.0, carbs=39.8, fat=0.3, fiber=0.3,
+                               fixed_g=150),
+        # Soups & noodles
+        "soto":          dict(id="tkpi_NEW_013", name="Soto Ayam",
+                               cal=237.5, protein=18.8, carbs=20.0, fat=9.5, fiber=1.0,
+                               fixed_g=380),
+        "mie ayam":      dict(id="tkpi_0085",   name="Mie Ayam",
+                               cal=178.5, protein=10.9, carbs=18.4, fat=6.9, fiber=0.0,
+                               fixed_g=300),
+        "mie goreng":    dict(id="tkpi_NEW_012", name="Mie Goreng",
+                               cal=300, protein=9.0, carbs=45.0, fat=10.0, fiber=2.0,
+                               fixed_g=300),
+        "bihun":         dict(id="tkpi_NEW_011", name="Bihun Goreng",
+                               cal=250, protein=7.0, carbs=40.0, fat=7.0, fiber=2.0,
+                               fixed_g=250),
+        # Grilled meats
+        "satay":         dict(id="tkpi_NEW_010", name="Sate Ayam",
+                               cal=348, protein=40.0, carbs=6.0, fat=18.0, fiber=0.0,
+                               fixed_g=120),
+        "sate":          dict(id="tkpi_NEW_010", name="Sate Ayam",
+                               cal=348, protein=40.0, carbs=6.0, fat=18.0, fiber=0.0,
+                               fixed_g=120),
+        # Curries & stews
+        "rendang":       dict(id="tkpi_0800",   name="Rendang sapi, masakan",
+                               cal=193, protein=22.6, carbs=7.8, fat=7.9, fiber=0.0,
+                               fixed_g=180),
+        "gulai":         dict(id="tkpi_NEW_014", name="Gulai",
+                               cal=200, protein=18.0, carbs=10.0, fat=10.0, fiber=1.0,
+                               fixed_g=200),
+        "kari":          dict(id="tkpi_NEW_014", name="Gulai/Kari",
+                               cal=200, protein=18.0, carbs=10.0, fat=10.0, fiber=1.0,
+                               fixed_g=200),
+        # Gado-gado & salads
+        "gado":          dict(id="tkpi_0413",   name="Gado-gado",
+                               cal=137, protein=6.1, carbs=21.0, fat=3.2, fiber=5.2,
+                               fixed_g=280),
+        # Sauces & toppings
         "sambal kacang": dict(id="tkpi_NEW_020", name="Sambal Kacang",
-                           calories_kcal=290.0, protein_g=12.0, carbs_g=20.0, fat_g=19.0, fiber_g=4.0),
-        "ketupat":    dict(id="tkpi_NEW_023",name="Ketupat",
-                           calories_kcal=123.0, protein_g=2.4,  carbs_g=26.7, fat_g=0.3, fiber_g=1.4),
-        "nasi putih": dict(id="tkpi_0001",   name="Nasi",
-                           calories_kcal=180.0, protein_g=3.0,  carbs_g=39.8, fat_g=0.3, fiber_g=0.3),
-        "white rice": dict(id="tkpi_0001",   name="Nasi",
-                           calories_kcal=180.0, protein_g=3.0,  carbs_g=39.8, fat_g=0.3, fiber_g=0.3),
-        "egg":        dict(id="egg",          name="EGG",
-                           calories_kcal=155.0, protein_g=13.3, carbs_g=1.1, fat_g=10.6, fiber_g=0.0),
-        "telur":      dict(id="egg",          name="EGG",
-                           calories_kcal=155.0, protein_g=13.3, carbs_g=1.1, fat_g=10.6, fiber_g=0.0),
-        "steamed rice": dict(id="tkpi_0001", name="Nasi",
-                           calories_kcal=180.0, protein_g=3.0,  carbs_g=39.8, fat_g=0.3, fiber_g=0.3),
+                               cal=290, protein=12.0, carbs=20.0, fat=19.0, fiber=4.0,
+                               fixed_g=20),
+        "bumbu":         dict(id="tkpi_NEW_020", name="Sambal Kacang",
+                               cal=290, protein=12.0, carbs=20.0, fat=19.0, fiber=4.0,
+                               fixed_g=15),
+        # Rice cakes
+        "ketupat":       dict(id="tkpi_NEW_023", name="Ketupat",
+                               cal=123, protein=2.4, carbs=26.7, fat=0.3, fiber=1.4,
+                               fixed_g=150),
+        # Eggs — fixed portion, not Gemini's estimate
+        "egg":           dict(id="egg",         name="EGG",
+                               cal=155, protein=13.3, carbs=1.1, fat=10.6, fiber=0.0,
+                               fixed_g=50),
+        "telur":         dict(id="egg",         name="EGG",
+                               cal=155, protein=13.3, carbs=1.1, fat=10.6, fiber=0.0,
+                               fixed_g=50),
+        "fried egg":     dict(id="egg",         name="EGG",
+                               cal=155, protein=13.3, carbs=1.1, fat=10.6, fiber=0.0,
+                               fixed_g=50),
+        "omelette":      dict(id="egg",         name="EGG",
+                               cal=155, protein=13.3, carbs=1.1, fat=10.6, fiber=0.0,
+                               fixed_g=50),
+        "tahu":          dict(id="tkpi_NEW_021", name="Tahu Goreng",
+                               cal=100, protein=8.0, carbs=2.0, fat=6.0, fiber=0.5,
+                               fixed_g=80),
+        "tempe":         dict(id="tkpi_NEW_022", name="Tempe Goreng",
+                               cal=170, protein=20.0, carbs=7.0, fat=9.0, fiber=4.0,
+                               fixed_g=80),
     }
 
     def _dish_override(name_lower: str):
-        """Return override nutrition dict if raw name matches a known pattern."""
-        for pattern, nutr in _DISH_NUTRITION.items():
-            if pattern in name_lower:
-                return nutr
+        """
+        Return override dict if raw name matches a known dish pattern.
+        Also handles parenthetical dish names like 'steamed white rice (nasi putih)'
+        by stripping anything in parentheses and matching against that too.
+        """
+        # Strip parenthetical: "steamed white rice (nasi putih)" → "steamed white rice"
+        stripped = re.sub(r'\([^)]*\)', '', name_lower).strip()
+        for check_name in [name_lower, stripped]:
+            for pattern in sorted(_DISH_NUTRITION.keys(), key=len, reverse=True):
+                if pattern in check_name:
+                    return _DISH_NUTRITION[pattern]
         return None
 
     identified = []
@@ -432,37 +504,39 @@ async def analyze(image: UploadFile = File(...)):
             # ── DETERMINISM FIX: override DB result for known ambiguous dishes ─
             # Gemini's vision is non-deterministic even with seed=42 for ambiguous
             # food photos. Apply a hard override so identical images always produce
-            # identical outputs, regardless of what Gemini's raw name is.
+            # identical outputs, using fixed nutrition AND fixed portions.
             override = _dish_override(ingredient_name)
+            portion_scale: float
             if override:
-                best = override
                 best_id = override["id"]
                 best_name = override["name"]
-                best_cal_per_100 = override["calories_kcal"]
-                best_protein = override.get("protein_g", 0)
-                best_carbs = override.get("carbs_g", 0)
-                best_fat = override.get("fat_g", 0)
-                best_fiber = override.get("fiber_g", 0)
+                cal_per_100 = override["cal"]
+                protein_per_100 = override["protein"]
+                carbs_per_100 = override["carbs"]
+                fat_per_100 = override["fat"]
+                fiber_per_100 = override["fiber"]
+                # Use fixed portion instead of Gemini's variable estimate
+                ing_portion = override["fixed_g"]
+                portion_scale = ing_portion / 100.0
                 best_source = "override"
             else:
-                best_protein = best.get("protein_g", 0)
-                best_carbs = best.get("carbs_g", 0)
-                best_fat = best.get("fat_g", 0)
-                best_fiber = best.get("fiber_g", 0)
+                cal_per_100 = best.get("calories_kcal") or 0
+                protein_per_100 = best.get("protein_g", 0)
+                carbs_per_100 = best.get("carbs_g", 0)
+                fat_per_100 = best.get("fat_g", 0)
+                fiber_per_100 = best.get("fiber_g", 0)
+                portion_scale = ing_portion / 100.0
                 best_source = best.get("source")
-
-            # Scale nutrition by portion (data is per 100g)
-            portion_scale = ing_portion / 100.0
 
             identified.append(IdentifiedFood(
                 raw_name=ingredient_name,
                 matched_id=best_id,
                 matched_name=best_name,
-                calories_kcal=round(best_cal_per_100 * portion_scale, 1),
-                protein_g=round((best_protein or 0) * portion_scale, 1),
-                carbs_g=round((best_carbs or 0) * portion_scale, 1),
-                fat_g=round((best_fat or 0) * portion_scale, 1),
-                fiber_g=round((best_fiber or 0) * portion_scale, 1),
+                calories_kcal=round(cal_per_100 * portion_scale, 1),
+                protein_g=round(protein_per_100 * portion_scale, 1),
+                carbs_g=round(carbs_per_100 * portion_scale, 1),
+                fat_g=round(fat_per_100 * portion_scale, 1),
+                fiber_g=round(fiber_per_100 * portion_scale, 1),
                 confidence=round(confidence, 2),
                 source=best_source,
             ))
