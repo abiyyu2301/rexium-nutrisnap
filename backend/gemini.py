@@ -153,8 +153,31 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
             config={
                 "system_instruction": SYSTEM_PROMPT,
                 "response_mime_type": "application/json",
+                "response_schema": {
+                    "type": "object",
+                    "properties": {
+                        "foods": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "portion_description": {"type": "string"},
+                                    "portion_grams_estimate": {"type": "number"},
+                                    "confidence": {"type": "number"},
+                                },
+                                "required": ["name", "description", "portion_grams_estimate", "confidence"],
+                            },
+                        },
+                        "total_grams_estimate": {"type": "number"},
+                        "overall_confidence": {"type": "number"},
+                        "notes": {"type": "string"},
+                    },
+                    "required": ["foods", "total_grams_estimate", "overall_confidence"],
+                },
                 "temperature": 0.3,
-                "max_output_tokens": 2048,
+                "max_output_tokens": 4096,
             },
         )
         raw_text = response.text
@@ -183,8 +206,31 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
             },
             "generation_config": {
                 "response_mime_type": "application/json",
+                "response_schema": {
+                    "type": "object",
+                    "properties": {
+                        "foods": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "portion_description": {"type": "string"},
+                                    "portion_grams_estimate": {"type": "number"},
+                                    "confidence": {"type": "number"},
+                                },
+                                "required": ["name", "description", "portion_grams_estimate", "confidence"],
+                            },
+                        },
+                        "total_grams_estimate": {"type": "number"},
+                        "overall_confidence": {"type": "number"},
+                        "notes": {"type": "string"},
+                    },
+                    "required": ["foods", "total_grams_estimate", "overall_confidence"],
+                },
                 "temperature": 0.3,
-                "max_output_tokens": 2048,
+                "max_output_tokens": 4096,
             },
         }
 
