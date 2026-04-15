@@ -53,9 +53,20 @@ EN_TO_ID = {
     "coconut": {"kelapa", "santan"},
     "snack": {"kudapan", "cemilan"},
     "meal": {"makan"},
-    "sauce": {"saus", "sambal"},
+    "sauce": {"saus", "sambal", "kecap", "kecap_manis", "kecap_asin"},
+    "soy sauce": {"kecap", "kecap_manis", "kecap_asin"},
+    "dark soy sauce": {"kecap_manis", "kecap", "kecap_asin"},
     "sweet": {"manis"},
     "spicy": {"pedas"},
+    "grilled": {"panggang", "bakar"},
+    "bakar": {"bakar", "panggang"},
+    "bbq": {"bakar", "panggang"},
+    "beverage": {"minuman", "es", "jus"},
+    "drink": {"minuman", "es", "jus"},
+    "teh tarik": {"teh_tarik", "teh"},
+    "iced tea": {"es_teh", "es_teh_manis", "teh_manis", "teh"},
+    "fruit juice": {"jus", "jeruk", "alpukat", "mangga", "jambu"},
+    "avocado": {"alpukat"},
 }
 
 

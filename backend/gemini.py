@@ -176,7 +176,7 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
                     },
                     "required": ["foods", "total_grams_estimate", "overall_confidence"],
                 },
-                "temperature": 0.3,
+                "temperature": 0.1,
                 "max_output_tokens": 4096,
             },
         )
@@ -229,7 +229,7 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
                     },
                     "required": ["foods", "total_grams_estimate", "overall_confidence"],
                 },
-                "temperature": 0.3,
+                "temperature": 0.1,
                 "max_output_tokens": 4096,
             },
         }
