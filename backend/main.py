@@ -229,11 +229,56 @@ async def analyze(image: UploadFile = File(...)):
         "mayonnaise", "mayo", "tuna salad", "tuna_,_salad",
     }
 
+    # Server-side portion clamping (safety net — Gemini may still overestimate)
+    # Hard caps per dish category in grams. Applied after Gemini returns estimates.
+    PORTION_CAPS = {
+        # (keyword substring -> max grams)  — first match wins
+        "nasi goreng": 220,
+        "nasi putih": 200,
+        "nasi": 250,          # generic rice dishes
+        "fried rice": 220,
+        "soto": 400,          # bowl soups
+        "mie goreng": 300,     # fried noodles
+        "mie": 300,           # general noodles
+        "bihun": 250,         # rice noodles
+        "kwetiau": 300,       # wide noodles
+        "sate": 120,          # satay (4-6 skewers)
+        "satay": 120,
+        "rendang": 200,       # rendang + curry
+        "kari": 200,
+        "gulai": 200,
+        "gado": 280,          # gado-gado
+        "salad": 250,
+        "telur": 60,          # eggs (1-2 pieces)
+        "egg": 60,
+        "tahu": 80,           # tofu portions
+        "tempe": 80,
+        "sambal": 20,        # sauces — small
+        "bumbu": 20,
+        "kecap": 15,
+        "peanut sauce": 30,   # peanut sauce is dense, small portion
+        "bawang goreng": 15,  # fried shallots garnish
+        "white rice": 200,
+        "steamed rice": 200,
+    }
+
+    def _clamp_portion(name: str, grams: float) -> float:
+        """Apply dish-category portion cap. Returns clamped value."""
+        name_lower = name.lower()
+        for keyword, cap in PORTION_CAPS.items():
+            if keyword in name_lower:
+                return min(grams, cap)
+        # Default: if Gemini says >400g for an unidentified item, cap it
+        if grams > 400:
+            return min(grams, 250)
+        return grams
+
     identified = []
     for item in raw_foods:
         name = item.get("name", "").lower()
         confidence = float(item.get("confidence", 0.5))
-        portion_grams = float(item.get("portion_grams_estimate", 100))
+        portion_grams_raw = float(item.get("portion_grams_estimate", 100))
+        portion_grams = _clamp_portion(name, portion_grams_raw)
 
         # Skip very generic labels
         if name in GENERIC_LABELS or len(name) < 3:
