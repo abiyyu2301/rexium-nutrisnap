@@ -143,7 +143,11 @@ class NutritionDB:
     def _score(self, query: str, candidate: str) -> float:
         """
         Score how well candidate matches query (0-1).
-        Uses normalized Levenshtein + substring match.
+        Uses normalized Levenshtein + substring match + word-overlap bonus.
+
+        Word-overlap bonus is critical for multi-word Indonesian dish names:
+        "beef rendang" (query) → "Rendang sapi" should beat "BEEF" even though
+        "BEEF" is a substring of "beef". Multi-word dish names are more specific.
         """
         q = query.lower().strip()
         c = candidate.lower().strip()
@@ -153,7 +157,20 @@ class NutritionDB:
             return 0.85 + 0.1 * (min(len(q), len(c)) / max(len(q), len(c)))
         dist = self._levenshtein(q, c)
         max_len = max(len(q), len(c))
-        return max(0.0, 1.0 - (dist / max_len))
+        base_score = max(0.0, 1.0 - (dist / max_len))
+
+        # Word-overlap bonus: reward candidates that share words with the query.
+        # Multi-word dish names (e.g. "Rendang sapi") should outrank generic
+        # single-word entries (e.g. "BEEF") for specific dish queries.
+        q_words = set(q.split())
+        c_words = set(c.split())
+        shared_words = q_words & c_words
+        if shared_words:
+            overlap_ratio = len(shared_words) / max(len(q_words), 1)
+            word_bonus = 0.15 * overlap_ratio
+            base_score = min(1.0, base_score + word_bonus)
+
+        return base_score
 
     def search_foods(self, query: str, limit: int = 5) -> list[dict]:
         """
