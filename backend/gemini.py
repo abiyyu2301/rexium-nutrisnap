@@ -73,6 +73,7 @@ IDENTIFICATION RULES:
 - If you're uncertain between two items, list the most likely one and note alternatives
 - Do NOT invent items you cannot see — only report what is actually in the image
 - Indonesian foods are common — watch for: nasi goreng, mie goreng, soto, rendang, satay, gado-gado, tempeh, tahu, sambal
+- CRITICAL — Indon vs Thai distinction: If the dish LOOKS like soto (yellow/herbal broth, rice noodles, bean sprouts), ALWAYS call it "soto" NOT "khao soi" (which is Thai). If it looks like pad thai, call it "mie goreng" NOT "pad thai". Indonesian cuisine uses yellow broth (kunyit/turmeric) and rice noodles — Thai dishes use egg noodles and coconut milk. Default to Indonesian names when in doubt.
 - Beverages: note if visible (coffee, tea, juice, water) and estimate volume
 - Do NOT respond with Chinese characters (no \u4e00-\u9fff range) — use English or Indonesian names only"""
 

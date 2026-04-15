@@ -183,6 +183,52 @@ async def analyze(image: UploadFile = File(...)):
     # Blocklist: nutrition DB entries that are bad matches for generic food labels
     BLOCKLIST_KEYWORDS = {"oil", "fat", "sugar", "syrup", "margarine", "shortening"}
 
+    # Compound name splitter: split "nasi ayam kecap" or "hainanese chicken rice dark soy sauce"
+    # into individual ingredients for separate matching
+    COMPOUND_SEPARATORS = [
+        " with ", " and ", " + ", ", ", " / ", " plus ",
+    ]
+
+    def _split_compound(name: str) -> list[str]:
+        """Split a compound food name into individual ingredient parts."""
+        name_lower = name.lower()
+        parts = [name_lower]
+        # Try splitting on known separators
+        for sep in COMPOUND_SEPARATORS:
+            if sep in name_lower:
+                split_parts = [p.strip() for p in name_lower.split(sep) if p.strip()]
+                if len(split_parts) >= 2:
+                    parts = split_parts
+                    break
+        # Also detect embedded sauces/toppings: "X with Y sauce" → ["X", "Y sauce"]
+        import re
+        sauce_match = re.search(r"(.+?)\s+(?:with\s+)?(.+?)\s+sauce", name_lower)
+        if sauce_match:
+            main = sauce_match.group(1).strip()
+            sauce = (sauce_match.group(2).strip() + " sauce").strip()
+            parts = [p.strip() for p in [main, sauce] if p.strip()]
+        return parts
+
+    # ── FIX 1: Always search the FULL name first, before splitting ──────────
+    # This prevents perfect dish-name matches from being lost to aggressive splitting.
+    # Only fall back to splitting when the full name scores poorly.
+    #
+    # FIX 2: When a generic vegetable term gets a high-calorie wrong match,
+    # skip it and prefer known vegetable entries with realistic low calories.
+    # ─────────────────────────────────────────────────────────────────────────
+
+    GENERIC_VEGETABLE_TERMS = {
+        "mixed salad greens", "salad greens", "mixed greens", "green salad",
+        "leaf vegetable", "leafy green", "mixed vegetables", "vegetable",
+        "sayur", "sayuran", "salad", "greens", "mixed vegetable",
+    }
+    # Blocklist: DB entries that are bad matches for generic vegetable queries
+    # (these are unrelated high-calorie items that happen to share generic tokens)
+    VEGETABLE_BLOCKLIST = {
+        "tuna_salad", "egg_salad", "chicken_salad", "tuna", "egg",
+        "mayonnaise", "mayo", "tuna salad", "tuna_,_salad",
+    }
+
     identified = []
     for item in raw_foods:
         name = item.get("name", "").lower()
@@ -197,23 +243,111 @@ async def analyze(image: UploadFile = File(...)):
         if confidence < 0.5 and name in {"vegetable", "fruit", "protein", "carb"}:
             continue
 
-        # Fuzzy search in Firestore
-        matches = db.search_foods(name.title(), limit=3)
+        # FIX 1a: Search the FULL compound name FIRST (before splitting).
+        # Only use split parts if the full name scores poorly (score < 0.75).
+        full_name_search = name.title()
+        full_matches = db.search_foods(full_name_search, limit=5)
+        use_split = True
+        if full_matches:
+            top_score = full_matches[0].get("score", 0)
+            top_name = full_matches[0].get("food_name", "").lower()
+            # If top match is a strong score AND the matched name is a reasonable
+            # superstring/substring of the query, accept it without splitting
+            if top_score >= 0.85 and (top_name in name or name in top_name):
+                use_split = False
 
-        if matches:
+        if use_split:
+            ingredient_names = _split_compound(name)
+        else:
+            # Full name matched well — treat the whole dish as one ingredient
+            ingredient_names = [name]
+
+        # Portion allocation: when splitting a compound dish, distribute the total
+        # portion across ingredients. Base sauces/toppings get small fixed portions
+        # rather than a proportional share.
+        SAUCE_GRAM_ESTIMATE = 15  # typical dipping sauce portion
+        TOPPING_GRAM_ESTIMATE = 30  # typical topping portion
+
+        num_ingredients = len(ingredient_names)
+        # For sauces/toppings in compound names, use a fixed small portion
+        # rather than the full dish portion
+        if num_ingredients >= 2:
+            # Check which parts look like sauces/toppings
+            SAUCE_INDICATORS = {"sauce", "dipping", "chili", "soy", "kecap", " sambal", "cabe", "cabai"}
+            allocated = []
+            remaining_grams = portion_grams
+            for i, ing in enumerate(ingredient_names):
+                is_sauce = any(s in ing for s in SAUCE_INDICATORS)
+                if is_sauce and i > 0:  # sauce is rarely the main dish
+                    allocated_grams = SAUCE_GRAM_ESTIMATE
+                else:
+                    # Main dish gets the rest
+                    other_sauces = sum(1 for j, x in enumerate(ingredient_names) if j != i and any(s in x for s in SAUCE_INDICATORS))
+                    allocated_grams = max(remaining_grams - (other_sauces * SAUCE_GRAM_ESTIMATE), 50)
+                allocated.append(allocated_grams)
+        else:
+            allocated = [portion_grams]
+
+        # Search for each ingredient separately
+        seen_ids = set()
+        for idx, ingredient_name in enumerate(ingredient_names):
+            if ingredient_name in seen_ids:
+                continue
+            seen_ids.add(ingredient_name)
+
+            # Skip if too generic
+            if ingredient_name in GENERIC_LABELS or len(ingredient_name) < 3:
+                continue
+
+            ing_portion = allocated[idx] if idx < len(allocated) else portion_grams
+
+            # FIX 1b: Search the full ingredient name (not split) first
+            ing_search_name = ingredient_name.title()
+            matches = db.search_foods(ing_search_name, limit=3)
+            if not matches:
+                continue
+
             best = matches[0]
+            best_id = best.get("id", "")
             best_name = best.get("food_name", "").lower()
+            best_cal_per_100 = best.get("calories_kcal") or 0
+
+            # FIX 2: Generic vegetable → avoid wrong high-calorie matches.
+            # If the match is a generic vegetable term but the DB entry is
+            # suspiciously high-calorie (>120 kcal/100g) AND matches a
+            # blocklisted non-vegetable entry, skip it and try more specific terms.
+            is_generic_veg = ingredient_name in GENERIC_VEGETABLE_TERMS
+            is_blocklisted = any(b in best_id or b in best_name for b in VEGETABLE_BLOCKLIST)
+            if is_generic_veg and is_blocklisted and best_cal_per_100 > 120:
+                # Try searching with explicit "sayur" / "selada" / "vegetable" suffix
+                for alt_term in ["selada", "sayur", "lettuce", "bayam", "kubis"]:
+                    alt_matches = db.search_foods(alt_term, limit=5)
+                    for alt in alt_matches:
+                        alt_cal = alt.get("calories_kcal") or 0
+                        alt_name = alt.get("food_name", "").lower()
+                        alt_id = alt.get("id", "")
+                        alt_blocked = any(b in alt_id or b in alt_name for b in VEGETABLE_BLOCKLIST)
+                        # Accept if: low calories AND not blocklisted
+                        if alt_cal < 100 and not alt_blocked:
+                            best = alt
+                            best_id = alt_id
+                            best_name = alt_name
+                            best_cal_per_100 = alt_cal
+                            break
+                    else:
+                        continue
+                    break
 
             # Skip bad blocklist matches for generic labels
-            if name in {"vegetable", "leaf vegetable", "fruit"}:
+            if ingredient_name in {"vegetable", "leaf vegetable", "fruit"}:
                 if any(b in best_name for b in BLOCKLIST_KEYWORDS):
                     continue
 
             # Scale nutrition by portion (data is per 100g)
-            portion_scale = portion_grams / 100.0
+            portion_scale = ing_portion / 100.0
 
             identified.append(IdentifiedFood(
-                raw_name=name,
+                raw_name=ingredient_name,
                 matched_id=best.get("id"),
                 matched_name=best.get("food_name"),
                 calories_kcal=round((best.get("calories_kcal") or 0) * portion_scale, 1),
@@ -224,20 +358,14 @@ async def analyze(image: UploadFile = File(...)):
                 confidence=round(confidence, 2),
                 source=best.get("source"),
             ))
-        else:
-            # No match found — still report it but with null nutrition
-            identified.append(IdentifiedFood(
-                raw_name=name,
-                matched_id=None,
-                matched_name=None,
-                calories_kcal=None,
-                protein_g=None,
-                carbs_g=None,
-                fat_g=None,
-                fiber_g=None,
-                confidence=round(confidence, 2),
-                source=None,
-            ))
+
+    # Deduplicate by matched_id, keeping the best (highest confidence) match
+    deduped_map = {}
+    for food in identified:
+        mid = food.matched_id
+        if mid not in deduped_map or food.confidence > deduped_map[mid].confidence:
+            deduped_map[mid] = food
+    identified = list(deduped_map.values())
 
     # 5. Compute totals
     matched = [f for f in identified if f.calories_kcal is not None]
