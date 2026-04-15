@@ -13,8 +13,12 @@ RUN pip uninstall -y google-cloud-aiplatform || true
 COPY backend/ .
 
 ENV PORT=8080
-ENV GCP_PROJECT=rexium-nutrisnap
-ENV GCP_LOCATION=asia-southeast1
+# Do NOT set GCP_PROJECT here — let the app detect credentials from the environment.
+# In Cloud Run with a service account, google.auth.default() picks up the SA credentials
+# and routes to Vertex AI. Setting GCP_PROJECT here can conflict with GEMINI_API_KEY
+# and cause 404 errors if the model name is wrong.
+# ENV GCP_PROJECT=rexium-nutrisnap
+# ENV GCP_LOCATION=asia-southeast1
 
 EXPOSE 8080
 

@@ -152,7 +152,7 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
     token = None
     if GEMINI_API_KEY:
         api_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp"
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash"
             f":generateContent?key={GEMINI_API_KEY}"
         )
     else:
@@ -167,7 +167,7 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
         api_url = (
             f"https://us-central1-aiplatform.googleapis.com/v1beta1/"
             f"projects/rexium-nutrisnap/locations/us-central1/"
-            f"publishers/google/models/gemini-2.0-flash-exp:generateContent"
+            f"publishers/google/models/gemini-2.0-flash:generateContent"
         )
 
     image_b64 = base64.b64encode(image_bytes).decode()
