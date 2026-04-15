@@ -103,6 +103,42 @@ async def health():
     return {"status": "ok", "version": "1.0.0"}
 
 
+@app.post("/analyze-debug")
+async def analyze_debug(image: UploadFile = File(...)):
+    """
+    Debug endpoint: returns raw Gemini response + identified foods before
+    any filtering or transformation. Use to diagnose why foods are empty.
+    """
+    try:
+        image_bytes = await image.read()
+    except Exception:
+        raise HTTPException(400, "Could not read uploaded file")
+
+    if len(image_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Image too large (max 10MB)")
+
+    allowed = {"image/jpeg", "image/png", "image/webp"}
+    if image.content_type not in allowed:
+        raise HTTPException(400, f"Unsupported file type: {image.content_type}")
+
+    image_bytes = preprocess_image(image_bytes)
+
+    try:
+        raw_foods, total_grams = analyze_meal_image(image_bytes)
+    except Exception as e:
+        raise HTTPException(500, f"Vision API error: {str(e)}")
+
+    return {
+        "raw_foods": raw_foods,
+        "total_grams_estimate": total_grams,
+        "num_foods": len(raw_foods),
+        "debug": {
+            "preprocess_bytes": len(image_bytes),
+            "gemini_response_schema": "foods[].name + portion_grams_estimate + confidence",
+        }
+    }
+
+
 @app.get("/test-gemini")
 async def test_gemini(model: str = "gemini-2.5-flash"):
     """Test Gemini access via Vertex AI REST API."""
