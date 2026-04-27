@@ -74,7 +74,6 @@ steps:
       - '--max-instances=10'
       - '--concurrency=10'
       - '--timeout=60s'
-      - '--set-env-vars=GCP_PROJECT=rexium-nutrisnap'
       - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
 
   # ── Deploy frontend ────────────────────────────────────────────────────────
