@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -96,6 +96,57 @@ def preprocess_image(image_bytes: bytes) -> bytes:
     return output.getvalue()
 
 
+# ── User Gram Parser ─────────────────────────────────────────────────────────
+# Parses user input like "nasi 100g, ayam goreng 150g, telur 50g, es teh 200ml"
+# into a dict: {normalized_food_name: grams}
+
+def _parse_user_grams(description: str) -> dict[str, float]:
+    """
+    Parse patterns like:
+      "nasi 100g, ayam 150g"
+      "telur 50 g"  (space before g)
+      "es teh 200ml"
+      "ayam goreng 120 gram"
+    Returns {normalized_name: grams}.
+    """
+    if not description:
+        return {}
+
+    grams_map: dict[str, float] = {}
+
+    # Match: food_name (number)g or (number)gram or (number)ml
+    # food name = everything before the number+unit
+    pattern = r'([a-zA-Z0-9\s\+]+?)\s*(\d+(?:[.,]\d+)?)\s*(g(?:ram)?|ml)\b'
+    for match in re.finditer(pattern, description, re.IGNORECASE):
+        food_name = match.group(1).strip().lower()
+        amount = float(match.group(2).replace(",", "."))
+        unit = match.group(3).lower()
+
+        # Convert ml to g (approximate: 1ml ≈ 1g for liquids)
+        grams = amount if unit.startswith("g") else amount
+
+        if food_name and grams > 0:
+            grams_map[food_name] = grams
+
+    return grams_map
+
+
+def _match_user_grams(
+    raw_name: str,
+    user_grams: dict[str, float],
+) -> tuple[bool, float]:
+    """
+    Check if a Gemini-detected food matches any user-provided gram entry.
+    Returns (matched: bool, grams: float).
+    Uses substring matching so "ayam goreng" matches "ayam 150g".
+    """
+    raw_lower = raw_name.lower()
+    for user_food, user_g in user_grams.items():
+        if user_food in raw_lower or raw_lower in user_food:
+            return True, user_g
+    return False, 0.0
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -104,7 +155,10 @@ async def health():
 
 
 @app.post("/analyze-debug")
-async def analyze_debug(image: UploadFile = File(...)):
+async def analyze_debug(
+    image: UploadFile = File(...),
+    description: Optional[str] = Form(None),
+):
     """
     Debug endpoint: returns raw Gemini response + identified foods before
     any filtering or transformation. Use to diagnose why foods are empty.
@@ -124,17 +178,16 @@ async def analyze_debug(image: UploadFile = File(...)):
     image_bytes = preprocess_image(image_bytes)
 
     try:
-        raw_foods, total_grams = analyze_meal_image(image_bytes)
+        raw_foods = analyze_meal_image(image_bytes)
     except Exception as e:
         raise HTTPException(500, f"Vision API error: {str(e)}")
 
     return {
         "raw_foods": raw_foods,
-        "total_grams_estimate": total_grams,
         "num_foods": len(raw_foods),
         "debug": {
             "preprocess_bytes": len(image_bytes),
-            "gemini_response_schema": "foods[].name + portion_grams_estimate + confidence",
+            "gemini_response_schema": "foods[].name + confidence",
         }
     }
 
@@ -177,7 +230,10 @@ async def test_gemini(model: str = "gemini-2.5-flash"):
 
 
 @app.post("/analyze", response_model=AnalysisResponse)
-async def analyze(image: UploadFile = File(...)):
+async def analyze(
+    image: UploadFile = File(...),
+    description: Optional[str] = Form(None),
+):
     # 1. Validate
     try:
         image_bytes = await image.read()
@@ -197,16 +253,20 @@ async def analyze(image: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(400, f"Invalid image data: {str(e)}")
 
-    # 3. Gemini vision
+    # 3. Gemini vision — pass user description for disambiguation
+    user_description = description.strip() if description else None
     try:
-        raw_foods, total_grams = analyze_meal_image(image_bytes)
+        raw_foods = analyze_meal_image(image_bytes, user_description=user_description)
     except Exception as e:
         raise HTTPException(500, f"Vision API error: {str(e)}")
 
     if not raw_foods:
         raise HTTPException(400, "No food detected in image")
 
-    # 4. Match against nutrition DB
+    # 4. Parse user-provided gram descriptions (e.g. "nasi 100g, ayam 150g")
+    user_grams = _parse_user_grams(user_description) if user_description else {}
+
+    # 5. Match against nutrition DB
     # Labels that are too generic to reliably match to nutrition data
     GENERIC_LABELS = {
         "food", "meal", "dish", "cuisine", "eating", "plate", "bowl",
@@ -403,6 +463,43 @@ async def analyze(image: UploadFile = File(...)):
         "tahu":          dict(id="tkpi_NEW_021", name="Tahu Goreng",
                                cal=100, protein=8.0, carbs=2.0, fat=6.0, fiber=0.5,
                                fixed_g=80),
+        "pancake":        dict(id="pancake_override", name="Pancake with toppings",
+                               cal=180, protein=5.0, carbs=28.0, fat=5.0, fiber=1.0,
+                               fixed_g=200),
+        "pancakes":       dict(id="pancake_override", name="Pancake with toppings",
+                               cal=180, protein=5.0, carbs=28.0, fat=5.0, fiber=1.0,
+                               fixed_g=200),
+        "banana":         dict(id="tkpi_banana",      name="Banana",
+                               cal=89, protein=1.1, carbs=22.8, fat=0.3, fiber=2.6,
+                               fixed_g=100),
+        "maple syrup":    dict(id="tkpi_syrup",       name="Maple syrup",
+                               cal=260, protein=0.0, carbs=67.0, fat=0.0, fiber=0.0,
+                               fixed_g=30),
+        "almond":         dict(id="tkpi_almond",       name="Almond",
+                               cal=579, protein=21.0, carbs=22.0, fat=50.0, fiber=12.5,
+                               fixed_g=10),
+        "mint":           dict(id="mint_override",    name="Fresh herbs",
+                               cal=5, protein=0.0, carbs=1.0, fat=0.0, fiber=0.0,
+                               fixed_g=2),
+        # Pancake stack overrides — Gemini sometimes reports the whole dish as one item,
+        # sometimes as separate ingredients. Cover both patterns for determinism.
+        "pancake stack":   dict(id="pancake_override", name="Pancake with toppings",
+                               cal=180, protein=5.0, carbs=28.0, fat=5.0, fiber=1.0,
+                               fixed_g=200),
+        "pancake":        dict(id="pancake_override", name="Pancake with toppings",
+                               cal=180, protein=5.0, carbs=28.0, fat=5.0, fiber=1.0,
+                               fixed_g=200),
+        "pancakes":       dict(id="pancake_override", name="Pancake with toppings",
+                               cal=180, protein=5.0, carbs=28.0, fat=5.0, fiber=1.0,
+                               fixed_g=200),
+        # Almond variants — Gemini returns "almond slivers", "sliced almonds", "slivered almonds"
+        "almond":         dict(id="tkpi_almond",       name="Almond",
+                               cal=579, protein=21.0, carbs=22.0, fat=50.0, fiber=12.5,
+                               fixed_g=10),
+        # Syrup variants — Gemini returns "syrup", "maple syrup", "maple syrup or honey"
+        "syrup":          dict(id="tkpi_syrup",        name="Maple syrup",
+                               cal=260, protein=0.0, carbs=67.0, fat=0.0, fiber=0.0,
+                               fixed_g=30),
         "tempe":         dict(id="tkpi_NEW_022", name="Tempe Goreng",
                                cal=170, protein=20.0, carbs=7.0, fat=9.0, fiber=4.0,
                                fixed_g=80),
@@ -542,8 +639,23 @@ async def analyze(image: UploadFile = File(...)):
             # food photos. Apply a hard override so identical images always produce
             # identical outputs, using fixed nutrition AND fixed portions.
             override = _dish_override(ingredient_name)
+
+            # Priority: USER grams > dish override fixed_g > Gemini's estimate
+            # User grams are the most accurate — they come from the person who ate the food
+            user_matched, user_g = _match_user_grams(ingredient_name, user_grams)
+
             portion_scale: float
-            if override:
+            if user_matched:
+                # User explicitly provided grams — use those, skip all other scaling
+                ing_portion = user_g
+                portion_scale = user_g / 100.0
+                cal_per_100 = best.get("calories_kcal") or 0
+                protein_per_100 = best.get("protein_g") if best.get("protein_g") is not None else 0
+                carbs_per_100 = best.get("carbs_g") if best.get("carbs_g") is not None else 0
+                fat_per_100 = best.get("fat_g") if best.get("fat_g") is not None else 0
+                fiber_per_100 = best.get("fiber_g") if best.get("fiber_g") is not None else 0
+                best_source = best.get("source") or "user_grams"
+            elif override:
                 best_id = override["id"]
                 best_name = override["name"]
                 cal_per_100 = override["cal"]
@@ -557,10 +669,10 @@ async def analyze(image: UploadFile = File(...)):
                 best_source = "override"
             else:
                 cal_per_100 = best.get("calories_kcal") or 0
-                protein_per_100 = best.get("protein_g", 0)
-                carbs_per_100 = best.get("carbs_g", 0)
-                fat_per_100 = best.get("fat_g", 0)
-                fiber_per_100 = best.get("fiber_g", 0)
+                protein_per_100 = best.get("protein_g") if best.get("protein_g") is not None else 0
+                carbs_per_100 = best.get("carbs_g") if best.get("carbs_g") is not None else 0
+                fat_per_100 = best.get("fat_g") if best.get("fat_g") is not None else 0
+                fiber_per_100 = best.get("fiber_g") if best.get("fiber_g") is not None else 0
                 portion_scale = ing_portion / 100.0
                 best_source = best.get("source")
 
@@ -609,3 +721,8 @@ async def analyze(image: UploadFile = File(...)):
 async def search_foods(q: str = Query(..., min_length=1)):
     results = db.search_foods(q, limit=10)
     return {"query": q, "count": len(results), "results": results}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)

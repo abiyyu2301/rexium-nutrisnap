@@ -28,65 +28,34 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
 
 # ── System + User Prompts ──────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are NutriSnap, an expert food identification and nutrition estimation AI.
-Your task is to analyze meal photos and identify all distinct food and drink items present.
+SYSTEM_PROMPT = """You are NutriSnap, an expert food identification AI.
+Your task is to identify all distinct food and drink items in the meal photo.
 
-CRITICAL -- ONE PLATE, NOT MULTIPLE PLATES:
-- All items you list belong to ONE single plate/meal/hand.
-- Do NOT list the same dish split into parts (e.g., do NOT list "hainanese chicken rice" AND "fragrant rice" AND "roasted chicken" separately -- these are the SAME dish. List it as ONE entry: "hainanese chicken rice" with ONE combined portion).
-- The sum of ALL portion_grams_estimate values must be realistic for a single meal: 200g--500g depending on plate size. If your individual portions sum to more than 500g, you are double-counting -- consolidate.
-- A standard dinner plate (one person) = 250-350g total. A big plate = 350-500g.
-
-For each item, estimate the portion size using visual cues
-(plate size, compare to fist/hand, typical serving conventions).
+CRITICAL RULES:
+- List EVERY distinct food item you can identify — do not skip minor ingredients
+- Be as specific as possible: "nasi goreng" not just "rice", "tahu goreng" not just "tofu"
+- Indonesian dishes are common: nasi goreng, mie goreng, soto, rendang, satay, gado-gado, tempeh, tahu, sambal
+- For each item: name it in the language it is most commonly known (English or Indonesian)
+- Do NOT estimate portions, calories, or nutrition — only identify what the food IS
+- Do NOT respond with Chinese characters (no \\u4e00-\\u9fff range)
+- If you cannot identify an item, say "unknown food item" — do not guess
 
 OUTPUT FORMAT -- respond ONLY with valid JSON in this exact structure:
 {
   "foods": [
     {
       "name": "specific food name in English or Indonesian",
-      "description": "brief description of the item and how you identified it",
-      "portion_description": "your estimated portion (e.g. '1 small plate ~150g', '2 tablespoons', '1 glass 240ml')",
-      "portion_grams_estimate": number in grams,
       "confidence": number between 0.0 and 1.0
     }
   ],
-  "total_grams_estimate": number in grams -- must be realistic for ONE plate (250-500g max),
-  "overall_confidence": number between 0.0 and 1.0,
-  "notes": "any observations about image quality, lighting, or ambiguity"
+  "notes": "any observations about image quality or ambiguity"
 }
 
-PORTION ESTIMATION GUIDELINES:
-- A fist = ~150g (use as reference for rice on a plate -- NOT 200g, most rice portions are smaller than a fist)
-- A tablespoon = ~15g (for sauces, gravies)
-- A palm-sized portion of meat/fish = ~85-100g
-- One piece of fruit (apple/orange) = ~150g
-- One slice of bread = ~30g
-- One plate of rice (Indonesian 'piring') = 150-200g MAX -- do NOT estimate more than 200g of rice per person per meal
-- If you cannot see the portion clearly, note it as 'unable to determine -- estimated'
-
-MAXIMUM PORTION CAPS -- do not exceed these under any circumstances:
-  - Rice dish (nasi goreng, nasi putih, nasi rendang, nasi kari): 250g total per person
-  - Fried rice (nasi goreng, mie goreng): 200g MAX for the rice component
-  - Soup / bowl (soto, soto ayam, sup, mie kuwe): 400g total (bowl)
-  - Noodle dish (mie, bihun, kwetiau): 300g total
-  - Satay (sate): 100g meat MAX (4-6 skewers typical)
-  - Gado-gado / salad: 250g total (vegetables + sauce)
-  - Rendang / curry: 200g total (meat + sauce)
-  - A full single plate meal: never exceed 500g total for ALL items combined
-  - If your estimated portion for ANY item exceeds the cap above, USE THE CAP instead. Nutrition accuracy depends on realistic portions, not maximum estimates.
-
-IDENTIFICATION RULES:
-- Be as specific as possible: not just "rice" but "steamed white rice (nasi putih)"
-- Not just "curry" but "chicken curry (kari ayam)" or "rendang"
-- Include the preparation method if visible: fried, steamed, grilled, etc.
-- List a dish AS ONE ENTRY -- do NOT decompose a dish into rice+protein+sauce separately
-- If you're uncertain between two items, list the most likely one and note alternatives
-- Do NOT invent items you cannot see -- only report what is actually in the image
-- Indonesian foods are common -- watch for: nasi goreng, mie goreng, soto, rendang, satay, gado-gado, tempeh, tahu, sambal
-- CRITICAL -- Indon vs Thai distinction: If the dish LOOKS like soto (yellow/herbal broth, rice noodles, bean sprouts), ALWAYS call it "soto" NOT "khao soi" (which is Thai). If it looks like pad thai, call it "mie goreng" NOT "pad thai". Indonesian cuisine uses yellow broth (kunyit/turmeric) and rice noodles -- Thai dishes use egg noodles and coconut milk. Default to Indonesian names when in doubt.
-- Beverages: note if visible (coffee, tea, juice, water) and estimate volume
-- Do NOT respond with Chinese characters (no \u4e00-\u9fff range) -- use English or Indonesian names only"""
+EXAMPLES OF GOOD OUTPUTS:
+- {"foods":[{"name":"nasi goreng","confidence":0.95},{"name":"tahu goreng","confidence":0.9}],"notes":""}
+- {"foods":[{"name":"banana","confidence":0.85},{"name":"maple syrup","confidence":0.9}],"notes":"pancake breakfast"}
+- {"foods":[{"name":"soto ayam","confidence":0.95},{"name":"nasi putih","confidence":0.9}],"notes":""}
+"""
 
 
 # ── Image Preprocessing ────────────────────────────────────────────────────────
@@ -126,7 +95,7 @@ def _get_access_token() -> str:
 
 # ── Core Analysis ──────────────────────────────────────────────────────────────
 
-def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]:
+def analyze_meal_image(image_bytes: bytes, user_description: Optional[str] = None) -> tuple[list[dict], Optional[float]]:
     """
     Analyze a meal photo using Vertex AI Gemini 1.5 Flash (via google.genai SDK).
     Returns (foods_list, total_grams_estimate) where total_grams is the model's
@@ -152,7 +121,7 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
     token = None
     if GEMINI_API_KEY:
         api_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash"
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash"
             f":generateContent?key={GEMINI_API_KEY}"
         )
     else:
@@ -171,17 +140,31 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
         )
 
     image_b64 = base64.b64encode(image_bytes).decode()
+
+    # Build user parts: image + optional description
+    user_parts = [
+        {
+            "inline_data": {
+                "mime_type": "image/jpeg",
+                "data": image_b64,
+            }
+        }
+    ]
+    if user_description:
+        user_parts.append({
+            "text": (
+                f"USER DESCRIPTION (use this to resolve ambiguous lookalike dishes):\n"
+                f"{user_description}\n\n"
+                f"When the user provides specific foods and/or gram amounts below, "
+                f"prioritize those items in your detection and lean toward matching "
+                f"what they described rather than relying solely on visual appearance."
+            )
+        })
+
     payload = {
         "contents": [{
             "role": "user",
-            "parts": [
-                {
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": image_b64,
-                    }
-                }
-            ]
+            "parts": user_parts
         }],
         "system_instruction": {
             "parts": [{"text": SYSTEM_PROMPT}]
@@ -197,19 +180,14 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
                             "type": "object",
                             "properties": {
                                 "name": {"type": "string"},
-                                "description": {"type": "string"},
-                                "portion_description": {"type": "string"},
-                                "portion_grams_estimate": {"type": "number"},
                                 "confidence": {"type": "number"},
                             },
-                            "required": ["name", "description", "portion_grams_estimate", "confidence"],
+                            "required": ["name", "confidence"],
                         },
                     },
-                    "total_grams_estimate": {"type": "number"},
-                    "overall_confidence": {"type": "number"},
                     "notes": {"type": "string"},
                 },
-                "required": ["foods", "total_grams_estimate", "overall_confidence"],
+                "required": ["foods", "notes"],
             },
             "temperature": 0.05,      # Very low for consistency
             "max_output_tokens": 4096,
@@ -226,29 +204,24 @@ def analyze_meal_image(image_bytes: bytes) -> tuple[list[dict], Optional[float]]
     raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
 
     # ── Parse JSON response ─────────────────────────────────────────────────────
-    foods, total_grams = _parse_gemini_response(raw_text)
+    foods = _parse_gemini_response(raw_text)
 
-    return foods, total_grams
+    return foods
 
 
 def _parse_gemini_response(raw_text: str) -> list[dict]:
     """
-    Parse Gemini's JSON response. Handles:
-    - Raw JSON dict with 'foods' key
-    - JSON embedded in markdown code blocks
-    - Malformed JSON with trailing text
+    Parse Gemini's JSON response. Returns list of {name, confidence}.
+    Handles: raw JSON, markdown code blocks, malformed JSON.
     """
-    # Strip markdown code fences if present
     text = raw_text.strip()
     if text.startswith("```"):
-        # Remove triple-backtick wrapper
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
 
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        # Try to extract the JSON object
         start = text.find("{")
         end = text.rfind("}") + 1
         if start != -1 and end > start:
@@ -260,16 +233,10 @@ def _parse_gemini_response(raw_text: str) -> list[dict]:
             raise ValueError(f"No JSON found in Gemini response: {raw_text[:200]}")
 
     foods_raw = data.get("foods", [])
-    results = []
-    for item in foods_raw:
-        results.append({
+    return [
+        {
             "name": item.get("name", "Unknown"),
-            "description": item.get("description", ""),
-            "portion_grams_estimate": float(item.get("portion_grams_estimate", 0)),
             "confidence": float(item.get("confidence", 0.5)),
-        })
-
-    # Extract top-level total for sanity-checking portion sums
-    total_grams = data.get("total_grams_estimate")
-
-    return results, total_grams
+        }
+        for item in foods_raw
+    ]

@@ -51,7 +51,7 @@ interface RecentAnalysis {
   timestamp: number;
 }
 
-type AppState = "idle" | "loading" | "result" | "error";
+type AppState = "idle" | "confirming" | "loading" | "result" | "error";
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
 
@@ -106,6 +106,9 @@ export default function HomePage() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [recent, setRecent] = useState<RecentAnalysis[]>([]);
+  // Confirming state: held file + description
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [description, setDescription] = useState<string>("");
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
@@ -114,13 +117,16 @@ export default function HomePage() {
     setRecent(loadRecent());
   }, []);
 
-  const analyzeImage = useCallback(async (file: File) => {
+  const analyzeImage = useCallback(async (file: File, descriptionText: string) => {
     setState("loading");
     setPreview(URL.createObjectURL(file));
     setErrorMsg("");
 
     const formData = new FormData();
     formData.append("image", file);
+    if (descriptionText.trim()) {
+      formData.append("description", descriptionText.trim());
+    }
 
     try {
       const res = await fetch(`${API_URL}/analyze`, {
@@ -158,14 +164,35 @@ export default function HomePage() {
     }
   }, []);
 
+  const handleFileSelected = useCallback((file: File) => {
+    // Show confirming screen with preview + description input
+    setPendingFile(file);
+    setPreview(URL.createObjectURL(file));
+    setDescription("");
+    setState("confirming");
+  }, []);
+
+  const handleConfirm = useCallback(() => {
+    if (!pendingFile) return;
+    analyzeImage(pendingFile, description);
+  }, [pendingFile, description, analyzeImage]);
+
+  const handleCancelConfirm = useCallback(() => {
+    if (preview) URL.revokeObjectURL(preview);
+    setPendingFile(null);
+    setPreview(null);
+    setDescription("");
+    setState("idle");
+  }, [preview]);
+
   const handleCameraFile = useCallback(
-    (file: File) => analyzeImage(file),
-    [analyzeImage]
+    (file: File) => handleFileSelected(file),
+    [handleFileSelected]
   );
 
   const handleGalleryFile = useCallback(
-    (file: File) => analyzeImage(file),
-    [analyzeImage]
+    (file: File) => handleFileSelected(file),
+    [handleFileSelected]
   );
 
   const handleCameraClick = () => {
@@ -183,10 +210,13 @@ export default function HomePage() {
   };
 
   const reset = () => {
+    if (preview) URL.revokeObjectURL(preview);
     setState("idle");
     setPreview(null);
     setResult(null);
     setErrorMsg("");
+    setPendingFile(null);
+    setDescription("");
   };
 
   const calorieClass = result
@@ -237,6 +267,41 @@ export default function HomePage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Confirming (preview + description + submit) ── */}
+      {state === "confirming" && preview && (
+        <div className={styles.confirmSection}>
+          <div className={styles.confirmImageWrapper}>
+            <img src={preview} alt="Preview" className={styles.confirmImage} />
+          </div>
+
+          <div className={styles.descCard}>
+            <label className={styles.descLabel} htmlFor="food-description">
+              Detail makanan (opsional)
+            </label>
+            <p className={styles.descHint}>
+              Contoh: nasi 100g, ayam goreng 150g, sambal 20g
+            </p>
+            <textarea
+              id="food-description"
+              className={styles.descInput}
+              rows={3}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="nasi 100g, ayam goreng 150g, telur 50g, es teh 200ml"
+            />
+          </div>
+
+          <div className={styles.confirmActions}>
+            <button className={styles.cancelBtn} onClick={handleCancelConfirm}>
+              Batal
+            </button>
+            <button className={styles.analyzeBtn} onClick={handleConfirm}>
+              🔍 Analisis
+            </button>
+          </div>
         </div>
       )}
 

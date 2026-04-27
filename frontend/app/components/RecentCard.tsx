@@ -27,14 +27,21 @@ function timeAgo(timestamp: number): string {
 }
 
 export default function RecentCard({ item, onRecall }: RecentCardProps) {
+  const [imgError, setImgError] = React.useState(false);
   return (
     <button className="recentCard" onClick={() => onRecall(item)} type="button">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={item.previewUrl}
-        alt="Food preview"
-        className="recentThumb"
-      />
+      {!imgError && (
+        <img
+          src={item.previewUrl}
+          alt="Food preview"
+          className="recentThumb"
+          onError={() => setImgError(true)}
+        />
+      )}
+      {imgError && (
+        <div className="recentThumb recentThumb--placeholder" aria-hidden="true" />
+      )}
       <div className="recentInfo">
         <p className="recentFoods">{item.foods.slice(0, 2).join(", ")}</p>
         <div className="recentMeta">

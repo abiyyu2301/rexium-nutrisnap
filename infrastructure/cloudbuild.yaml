@@ -74,8 +74,7 @@ steps:
       - '--max-instances=10'
       - '--concurrency=10'
       - '--timeout=60s'
-      # Note: Do NOT set GCP_PROJECT here — forces Vertex AI path which lacks seed support.
-      # Let the app detect GEMINI_API_KEY and use the direct Gemini API path instead.
+      - '--set-env-vars=GCP_PROJECT=rexium-nutrisnap'
       - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
 
   # ── Deploy frontend ────────────────────────────────────────────────────────
